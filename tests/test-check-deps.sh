@@ -18,7 +18,7 @@ exit 0'
 
 out=$(PATH="$bin:$PATH" bash "$SCRIPT" 2>&1)
 assert_contains "$out" "[OK] Java 21 detected" \
-  "D4: parses a dotless Java version without grep -oP"
+  "D4: parses a dotless Java version using a portable grep"
 
 # The common dotted form must keep working.
 bin2=$(new_tmpdir)

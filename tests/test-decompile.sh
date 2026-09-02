@@ -27,7 +27,7 @@ touch "$work/app.apk"
 out=$(cd "$work" && PATH="$bin:$PATH" bash "$SCRIPT" app.apk 2>&1)
 
 assert_contains "$out" "com/example/network" \
-  "D4: print_structure lists nested packages without find -printf"
+  "D4: print_structure lists nested packages using a portable find"
 assert_not_contains "$out" "Top-level packages (jadx):
 (none)" \
   "D4: print_structure does not silently report (none)"

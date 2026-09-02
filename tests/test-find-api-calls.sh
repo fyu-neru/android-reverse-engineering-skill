@@ -56,9 +56,9 @@ JAVA
 
 out3=$(bash "$SCRIPT" --all "$src3" 2>&1)
 assert_contains "$out3" "Retrofit=2" \
-  "D5: summary counts two Retrofit annotations without declare -A"
+  "D5: summary counts two Retrofit annotations using a portable counter"
 assert_contains "$out3" "OkHttp=1" \
-  "D5: summary counts one OkHttp call without declare -A"
+  "D5: summary counts one OkHttp call using a portable counter"
 
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
