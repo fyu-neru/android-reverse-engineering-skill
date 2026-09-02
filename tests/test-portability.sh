@@ -70,5 +70,10 @@ assert_contains "$sc_widen_hits" '${x,}' \
 assert_contains "$sc_widen_hits" '${y^}' \
   "case-mod regex self-test: catches single-char uppercase fold \${var^}"
 
+# --- D4: GNU-only tool options (absent on BSD/macOS) ---
+scan "no find -printf (GNU only)" '\bfind\b[^|]*-printf'
+scan "no grep -oP / -P (GNU only)" 'grep[^|]*[[:space:]]-[a-zA-Z]*P\b'
+scan "no readlink -f (GNU only)" '\breadlink[[:space:]]+-f\b'
+
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"

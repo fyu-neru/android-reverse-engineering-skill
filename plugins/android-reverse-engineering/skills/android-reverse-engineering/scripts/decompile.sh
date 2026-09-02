@@ -351,9 +351,12 @@ print_structure() {
     local packages=()
     echo
     echo "Top-level packages ($label):"
+    # BSD find has no -printf; strip the prefix in the shell instead.
+    # -mindepth / -maxdepth are portable.
     while IFS= read -r pkg; do
+      pkg="${pkg#"$src_dir"/}"
       [[ -n "$pkg" ]] && packages+=("$pkg")
-    done < <(find "$src_dir" -mindepth 1 -maxdepth 3 -type d -printf '%P\n' | sort)
+    done < <(find "$src_dir" -mindepth 1 -maxdepth 3 -type d | LC_ALL=C sort)
 
     local limit=${#packages[@]}
     if (( limit > 20 )); then
