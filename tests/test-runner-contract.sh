@@ -22,9 +22,14 @@ INNER2
 
 out=$(bash "$work/tests/run-tests.sh" 2>&1 || true)
 
-assert_contains "$out" "test-forgot-summary.sh" \
+# These check the specific ERROR wording the runner is supposed to emit,
+# not just that the filename appears anywhere in the output — the
+# pre-existing "Failing files:" summary line already names the file
+# regardless of this fix, so a bare filename check would pass identically
+# before and after and prove nothing.
+assert_contains "$out" "ERROR - test-forgot-summary.sh" \
   "[all] runner names the file that omitted its SUMMARY line"
-assert_contains "$out" "SUMMARY" \
+assert_contains "$out" "produced no 'SUMMARY <run> <failed>' line" \
   "[all] runner explains that the SUMMARY line is what was missing"
 
 cleanup_tmpdirs
