@@ -1,0 +1,5 @@
+# Isolated worktrees for feature/hotfix work
+.worktrees/
+
+# Subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/
