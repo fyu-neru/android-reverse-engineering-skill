@@ -1,0 +1,4 @@
+FILE:tests/test-tools-psv.sh
+FIND:DOC_ONLY_COLUMNS=""
+REPLACE:DOC_ONLY_COLUMNS="purpose"
+EXPECT:no documentation-only column has acquired a consumer

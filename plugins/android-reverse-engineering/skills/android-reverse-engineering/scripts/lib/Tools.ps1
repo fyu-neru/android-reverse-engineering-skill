@@ -40,20 +40,36 @@ function Get-ToolsLines {
     return $lines
 }
 
-function Expand-ToolHome {
+function Expand-ToolPlaceholders {
     param([Parameter(Mandatory = $true)][string]$Value)
-    # NOT cross-reader tested: $env:USERPROFILE and bash's $HOME are
-    # different literal strings even on the same Git-Bash-on-Windows
-    # machine (e.g. C:\Users\foo vs /c/Users/foo), so a verbatim
-    # string comparison of the *expanded literal* between tools.sh's
-    # _tools_expand and this function is structurally meaningless - it
-    # would always "diverge" even when both are correct. What tests/
-    # test-tools-psv.sh checks instead (same-platform) is that both
-    # readers expand {HOME} to a path that resolves to the SAME file on
-    # disk, which is the actual property that matters.
+    # Expands {HOME} and {LOCALAPPDATA} in a candidate path.
+    #
+    # {LOCALAPPDATA} exists so a single candidates list can carry
+    # Windows-only locations (spelled with the .bat extension Windows
+    # actually needs, resolved against $env:LOCALAPPDATA) alongside Unix
+    # locations in the same tools.psv row: both readers only test file
+    # existence, so a Windows-only candidate simply never matches on Unix
+    # and vice versa - no platform-column branching required (fix round 1,
+    # Finding 1). $env:LOCALAPPDATA is expected to be set on every real
+    # Windows session; if it's ever empty, this expands the placeholder to
+    # the empty string and the resulting candidate simply fails the
+    # existence test below, exactly like any other non-existent candidate.
+    #
+    # NOT cross-reader tested as a raw string: $env:USERPROFILE/
+    # $env:LOCALAPPDATA and bash's $HOME/$LOCALAPPDATA are different
+    # literal strings even on the same Git-Bash-on-Windows machine (e.g.
+    # C:\Users\foo vs /c/Users/foo), so a verbatim string comparison of the
+    # *expanded literal* between tools.sh's _tools_expand and this function
+    # is structurally meaningless - it would always "diverge" even when
+    # both are correct. What tests/test-tools-psv.sh checks instead
+    # (same-platform) is that both readers expand a placeholder to a path
+    # that resolves to the SAME file on disk, which is the actual property
+    # that matters.
     $homeDir = $env:USERPROFILE
     if (-not $homeDir) { $homeDir = $HOME }
-    return $Value.Replace('{HOME}', $homeDir)
+    $localAppData = $env:LOCALAPPDATA
+    if (-not $localAppData) { $localAppData = '' }
+    return $Value.Replace('{HOME}', $homeDir).Replace('{LOCALAPPDATA}', $localAppData)
 }
 
 # Split-PsvRow -Line <line>
@@ -147,7 +163,7 @@ function Resolve-Tool {
     if ($null -eq $candidates) { return $null }
     if ($candidates -cne '-') {
         foreach ($c in ($candidates -split ';')) {
-            $expanded = Expand-ToolHome -Value $c
+            $expanded = Expand-ToolPlaceholders -Value $c
             if (Test-Path -LiteralPath $expanded -PathType Leaf) {
                 return [pscustomobject]@{ Kind = $kind; Path = $expanded }
             }

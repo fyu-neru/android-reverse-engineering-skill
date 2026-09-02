@@ -64,19 +64,33 @@ tool_field() {
 }
 
 _tools_expand() {
-  # Expand {HOME} in a candidate path. Deliberately not eval.
+  # Expand {HOME} and {LOCALAPPDATA} in a candidate path. Deliberately not
+  # eval.
   #
-  # NOT cross-reader tested as a raw string: bash's $HOME and
-  # PowerShell's $env:USERPROFILE are different literal strings even on
-  # the same Git-Bash-on-Windows machine (e.g. /c/Users/foo vs
-  # C:\Users\foo), so comparing the two readers' *default-derived*
+  # {LOCALAPPDATA} exists so a single candidates list can carry Windows-only
+  # locations (spelled with the .bat extension Windows actually needs,
+  # resolved against %LOCALAPPDATA%) alongside Unix locations in the same
+  # tools.psv row: both readers only test file existence, so a Windows-only
+  # candidate simply never matches on Unix and vice versa - no
+  # platform-column branching required (fix round 1, Finding 1). $LOCALAPPDATA
+  # is normally unset outside Windows, in which case it expands to the empty
+  # string and the resulting candidate (a path with a bare leading "/")
+  # simply fails the existence test below, exactly like any other
+  # non-existent candidate.
+  #
+  # NOT cross-reader tested as a raw string: bash's $HOME/$LOCALAPPDATA and
+  # PowerShell's $env:USERPROFILE/$env:LOCALAPPDATA are different literal
+  # strings even on the same Git-Bash-on-Windows machine (e.g. /c/Users/foo
+  # vs C:\Users\foo), so comparing the two readers' *default-derived*
   # expansion verbatim is structurally meaningless - it would "diverge"
   # even when both are correct. tests/test-tools-psv.sh's Group 7
-  # instead points both readers' home-directory variable at the same
-  # native directory and checks they resolve to the same file - see the
-  # matching comment on Expand-ToolHome in Tools.ps1.
+  # instead points both readers' home-directory/local-appdata variables at
+  # the same native directory and checks they resolve to the same file -
+  # see the matching comment on Expand-ToolPlaceholders in Tools.ps1.
   local s="$1"
-  printf '%s\n' "${s//\{HOME\}/$HOME}"
+  s="${s//\{HOME\}/$HOME}"
+  s="${s//\{LOCALAPPDATA\}/${LOCALAPPDATA:-}}"
+  printf '%s\n' "$s"
 }
 
 # tool_resolve <id>

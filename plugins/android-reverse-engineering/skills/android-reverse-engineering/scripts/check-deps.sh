@@ -5,7 +5,7 @@
 #
 # Existence and resolution order (env override -> PATH probe -> candidate
 # paths) for the tools listed in lib/tools.psv (java, jadx, vineflower, adb)
-# comes from lib/tools.sh's tool_list/tool_resolve/tool_field rather than a
+# comes from lib/tools.sh's tool_list, tool_resolve and tool_field, not a
 # second, independently-maintained candidate-path list — see lib/tools.sh's
 # header comment for the drift that duplication used to cause. dex2jar and
 # apktool are not yet in tools.psv (they are dropped from the plugin

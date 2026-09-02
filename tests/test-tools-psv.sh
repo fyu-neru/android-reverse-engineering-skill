@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # test-tools-psv.sh — reader tests and cross-reader consistency for
 # tools.psv, tools.sh and Tools.ps1 (Task 1, commit 5f55944; fix round 1
-# on Tasks 1+2 hardened tools.sh/Tools.ps1's parsing rules themselves).
+# on Tasks 1+2 hardened tools.sh/Tools.ps1's parsing rules themselves;
+# fix round 1 on Task 3 restored the dropped Windows jadx candidates and
+# widened Group 6's field-usage scan to cover consumer scripts, not just
+# the two reader files).
 #
 # This is the highest-value artifact of the 2.0.0 release: the two readers
 # must agree exactly, or a divergence recreates the class of bug the whole
@@ -239,57 +242,184 @@ assert_equals "$ps_extract_count" "$ps_call_site_count" \
   "[all] static: every Get-ToolField call site in Tools.ps1 yields an extractable single-quoted column name (no call form is silently uncounted)"
 
 # =====================================================================
-# Group 6 — static: tools.psv's header matches the union of fields the
-# two readers use. A header column no reader consumes at all (not even a
-# documented future consumer), or a field a reader uses that the header
-# lacks, must both fail.
+# Group 6 — static: tools.psv's header matches the union of fields
+# referenced by tool_field/Get-ToolField calls ANYWHERE in the plugin —
+# not just inside the two reader files.
+#
+# Fix round 1, Finding 2: scanning only tools.sh/Tools.ps1 (as this group
+# originally did) meant a column consumed exclusively by a downstream
+# consumer script that sources the readers — e.g. check-deps.sh's
+# `tool_field vineflower purpose` — never registered as "used" at all, so
+# RESERVED_FUTURE_CONSUMER/DOC_ONLY_COLUMNS could never be forced to
+# shrink once consumption moved out of the readers themselves, which is
+# exactly what Task 3 onward does. This group now scans every *.sh and
+# *.ps1 file under scripts/ (the two readers plus every consumer) with a
+# looser bash extraction pattern that accepts any id-argument form (a
+# bareword literal, $var, or "$var") — the PowerShell extraction pattern
+# already never cared about the -Id argument's form, only -Column's.
 #
 # Design note: tools.psv (Task 1) deliberately carries columns neither
-# resolution reader touches yet. Two different reasons, tracked
-# separately (fix round 1, Finding 5):
+# resolution reader touches directly yet. Two different reasons, tracked
+# separately (fix round 1, Finding 5; widened in fix round 1 on Task 3,
+# Finding 2):
 #
 #   - RESERVED_FUTURE_CONSUMER: platform, gh_repo, asset, pin, pin_digest
 #     are reserved for install-dep.sh/check-deps.sh migrations later in
 #     the 2.0.0 roadmap (design doc §7). Each one is expected to gain a
-#     real tool_field/Get-ToolField consumer in a later task, and MUST be
-#     struck from this list in that same change — otherwise it silently
-#     joins `used` while staying `reserved`, the allowlist union never
-#     shrinks, and nothing ever prompts anyone to edit it. The assertion
-#     below enforces that: it fails the moment any reserved-future column
-#     shows up in `used`, forcing the list to shrink as tasks land.
+#     real consumer (in a reader OR any consumer script) in a later task,
+#     and MUST be struck from this list in that same change — otherwise
+#     it silently joins `used` while staying `reserved`, the allowlist
+#     union never shrinks, and nothing ever prompts anyone to edit it.
+#     The assertion below enforces that: it fails the moment any
+#     reserved-future column shows up in `used`, forcing the list to
+#     shrink as tasks land.
 #
-#   - DOC_ONLY_COLUMNS: purpose is documentation-only per the PSV's own
-#     header comment, and by design is never meant to be read by
-#     tool_field/Get-ToolField at all (its value exists for a human
-#     reading tools.psv, not for resolution logic) — it is not "waiting
-#     for a future consumer" the way the columns above are, so it is not
-#     subject to the shrink-as-consumed rule and lives in its own list.
+#   - DOC_ONLY_COLUMNS: columns meant purely for a human reading
+#     tools.psv, with no resolution-logic reader. The identical
+#     shrink-as-consumed rule now applies here too (fix round 1, Finding
+#     2) — a documentation-only column that acquires a real consumer must
+#     be struck from this list in the same change. DOC_ONLY_COLUMNS is
+#     empty as of this change: `purpose` was its only member, and is now
+#     consumed by check-deps.sh/.ps1 (via tool_field/Get-ToolField) to
+#     build the "why it's missing" text for optional tools.
 # =====================================================================
+SCRIPTS_DIR="$REPO_ROOT/plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts"
+
+consumer_sh_files=()
+while IFS= read -r _consumer_f; do
+  consumer_sh_files[${#consumer_sh_files[@]}]="$_consumer_f"
+done < <(find "$SCRIPTS_DIR" -name '*.sh' | sort)
+
+consumer_ps1_files=()
+while IFS= read -r _consumer_f; do
+  consumer_ps1_files[${#consumer_ps1_files[@]}]="$_consumer_f"
+done < <(find "$SCRIPTS_DIR" -name '*.ps1' | sort)
+
+if [ "${#consumer_sh_files[@]}" -gt 0 ]; then _csh_state=nonempty; else _csh_state=empty; fi
+assert_equals "$_csh_state" "nonempty" \
+  "[all] precondition: found at least one *.sh file under scripts/ to scan for tool_field consumers"
+if [ "${#consumer_ps1_files[@]}" -gt 0 ]; then _cps_state=nonempty; else _cps_state=empty; fi
+assert_equals "$_cps_state" "nonempty" \
+  "[all] precondition: found at least one *.ps1 file under scripts/ to scan for Get-ToolField consumers"
+
+bash_wide_field_extract_pattern='tool_field [^[:space:]]+ [A-Za-z_][A-Za-z0-9_]*'
+bash_all_fields=$(grep -ohE -- "$bash_wide_field_extract_pattern" \
+  ${consumer_sh_files[@]+"${consumer_sh_files[@]}"} 2>/dev/null | awk '{print $NF}' | sort -u)
+ps_all_fields=$(grep -ohE -- "$ps_field_extract_pattern" \
+  ${consumer_ps1_files[@]+"${consumer_ps1_files[@]}"} 2>/dev/null \
+  | sed -E "s/-Column '([A-Za-z_][A-Za-z0-9_]*)'/\1/" | sort -u)
+
+if [ -n "$bash_all_fields" ]; then _baf_state=nonempty; else _baf_state=empty; fi
+assert_equals "$_baf_state" "nonempty" \
+  "[all] precondition: the widened bash tool_field scan across scripts/ found at least one column reference"
+if [ -n "$ps_all_fields" ]; then _paf_state=nonempty; else _paf_state=empty; fi
+assert_equals "$_paf_state" "nonempty" \
+  "[all] precondition: the widened Get-ToolField scan across scripts/ found at least one column reference"
+
+# Fix round 1, Finding 2, concrete demonstration: the widened scan must
+# actually see a consumer-script-only reference. check-deps.sh/.ps1 are
+# the only callers of `purpose` anywhere in the plugin (neither reader
+# calls tool_field/Get-ToolField with 'purpose' itself), so this fails
+# unless the scan genuinely reaches beyond tools.sh/Tools.ps1.
+assert_contains "$bash_all_fields" "purpose" \
+  "[all] static: the widened scan sees check-deps.sh's tool_field <id> purpose call — a consumer-script-only reference, invisible to a readers-only scan"
+assert_contains "$ps_all_fields" "purpose" \
+  "[all] static: the widened scan sees check-deps.ps1's Get-ToolField -Column 'purpose' call — a consumer-script-only reference, invisible to a readers-only scan"
+
 header_line=$(head -1 "$TOOLS_PSV")
 header_fields=$(printf '%s' "$header_line" | tr '|' '\n' | grep -vFx 'id' | sort -u)
-used_fields=$(printf '%s\n%s\n' "$bash_fields" "$ps_fields" | sort -u)
+used_fields=$(printf '%s\n%s\n' "$bash_all_fields" "$ps_all_fields" | sort -u)
 
 RESERVED_FUTURE_CONSUMER="platform gh_repo asset pin pin_digest"
-DOC_ONLY_COLUMNS="purpose"
+DOC_ONLY_COLUMNS=""
 reserved_future_sorted=$(printf '%s\n' $RESERVED_FUTURE_CONSUMER | sort -u)
 doc_only_sorted=$(printf '%s\n' $DOC_ONLY_COLUMNS | sort -u)
 
 missing_from_header=$(comm -23 <(printf '%s\n' "$used_fields") <(printf '%s\n' "$header_fields"))
 assert_equals "$missing_from_header" "" \
-  "[all] static: tools.psv header contains every field name referenced by tool_field/Get-ToolField"
+  "[all] static: tools.psv header contains every field name referenced by tool_field/Get-ToolField, in a reader or any consumer script"
 
 allowed_fields=$(printf '%s\n%s\n%s\n' "$used_fields" "$reserved_future_sorted" "$doc_only_sorted" | sort -u)
 extra_in_header=$(comm -23 <(printf '%s\n' "$header_fields") <(printf '%s\n' "$allowed_fields"))
 assert_equals "$extra_in_header" "" \
-  "[all] static: every tools.psv header column is either used by a reader, reserved for a future consumer, or documentation-only"
+  "[all] static: every tools.psv header column is either used by a reader/consumer, reserved for a future consumer, or documentation-only"
 
 # The enforcing half of Finding 5: a reserved-future column that has
-# acquired a real consumer must be struck from RESERVED_FUTURE_CONSUMER
-# in the same change. If it isn't, it shows up in both `used` and
-# `reserved` at once — this intersection must be empty.
+# acquired a real consumer — in a reader OR any consumer script — must be
+# struck from RESERVED_FUTURE_CONSUMER in the same change. If it isn't,
+# it shows up in both `used` and `reserved` at once — this intersection
+# must be empty.
 reserved_now_used=$(comm -12 <(printf '%s\n' "$used_fields") <(printf '%s\n' "$reserved_future_sorted"))
 assert_equals "$reserved_now_used" "" \
-  "[all] static: no reserved-for-future-consumer column has acquired a reader yet (strike it from RESERVED_FUTURE_CONSUMER in the same change that adds its first tool_field/Get-ToolField call)"
+  "[all] static: no reserved-for-future-consumer column has acquired a consumer yet, in a reader or any consumer script (strike it from RESERVED_FUTURE_CONSUMER in the same change that adds its first tool_field/Get-ToolField call)"
+
+# Fix round 1, Finding 2 — the symmetric rule for DOC_ONLY_COLUMNS: a
+# documentation-only column that has acquired a real consumer must be
+# struck from this list in the same change, for the identical reason the
+# RESERVED_FUTURE_CONSUMER assertion above exists. This is what lets
+# `purpose` acquiring check-deps.sh/.ps1 as a real consumer force
+# DOC_ONLY_COLUMNS to actually shrink instead of silently going stale.
+doc_only_now_used=$(comm -12 <(printf '%s\n' "$used_fields") <(printf '%s\n' "$doc_only_sorted"))
+assert_equals "$doc_only_now_used" "" \
+  "[all] static: no documentation-only column has acquired a consumer yet, in a reader or any consumer script (strike it from DOC_ONLY_COLUMNS in the same change that adds its first tool_field/Get-ToolField call)"
+
+# =====================================================================
+# Group 8 — fix round 1, Finding 1: the REAL tools.psv jadx row must
+# resolve every one of its candidates, including the three Windows-only
+# .bat locations restored in this fix round. They were present in the
+# pre-resolution-layer check-deps.ps1 (%USERPROFILE%\.local\share\jadx\
+# bin\jadx.bat, %USERPROFILE%\jadx\bin\jadx.bat,
+# %LOCALAPPDATA%\jadx\bin\jadx.bat) and had been silently dropped when
+# tools.psv was authored in Task 1/2 — exactly the "candidate present in
+# one file, absent from another" bug class this release exists to
+# eliminate. Verified against the REAL tools.psv (not a private fixture)
+# so a future edit that narrows the candidates list again is caught here,
+# not only in a fixture that could quietly drift out of sync with the
+# real data.
+# =====================================================================
+real_jadx_candidates=$(CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" TOOLS_SH_PATH="$TOOLS_SH" "${BASH:-bash}" -c \
+  '. "$TOOLS_SH_PATH"; tool_field jadx candidates')
+
+if [ -n "$real_jadx_candidates" ]; then _rjc_state=nonempty; else _rjc_state=empty; fi
+assert_equals "$_rjc_state" "nonempty" \
+  "[all] precondition: real tools.psv jadx row has a non-empty candidates field before splitting it"
+
+jadx_cand_list=()
+_jc_oldifs="$IFS"
+IFS=';'
+for _jc in $real_jadx_candidates; do
+  IFS="$_jc_oldifs"
+  jadx_cand_list[${#jadx_cand_list[@]}]="$_jc"
+  IFS=';'
+done
+IFS="$_jc_oldifs"
+
+expected_jadx_candidate_count=4
+assert_equals "${#jadx_cand_list[@]}" "$expected_jadx_candidate_count" \
+  "[all] precondition: real tools.psv jadx row lists exactly the expected 4 candidates (1 Unix + 3 restored Windows .bat locations) before testing each individually"
+
+_jc_idx=0
+while [ "$_jc_idx" -lt "${#jadx_cand_list[@]}" ]; do
+  _jc_template="${jadx_cand_list[$_jc_idx]}"
+  jhome=$(new_tmpdir)
+  jlocalappdata=$(new_tmpdir)
+  jbin=$(new_tmpdir)
+  _jc_expected=$(printf '%s' "$_jc_template" | sed "s#{HOME}#$jhome#g; s#{LOCALAPPDATA}#$jlocalappdata#g")
+  mkdir -p "$(dirname "$_jc_expected")"
+  touch "$_jc_expected"
+
+  # PATH is a fresh, empty tmpdir with nothing else appended: no real
+  # "jadx" can be found on it, so resolution is forced past the PATH
+  # probe and down to exactly this one candidate (nothing earlier in the
+  # list is created in this fixture, so an earlier one winning by
+  # accident would be a false pass, not a coincidence to worry about).
+  _jc_out=$(HOME="$jhome" LOCALAPPDATA="$jlocalappdata" PATH="$jbin" \
+    CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" TOOLS_SH_PATH="$TOOLS_SH" \
+    "${BASH:-bash}" -c '. "$TOOLS_SH_PATH"; tool_resolve jadx')
+  assert_equals "$_jc_out" "$_jc_expected" \
+    "[all] tool_resolve: real jadx candidate #$((_jc_idx + 1)) ($_jc_template) is found by itself, with no earlier candidate present and nothing on PATH"
+  _jc_idx=$((_jc_idx + 1))
+done
 
 # =====================================================================
 # Group 7 — PowerShell runtime consistency: the same fixture fed to both
@@ -314,8 +444,13 @@ assert_equals "$reserved_now_used" "" \
 #     home-directory derivation as raw strings — $HOME and
 #     $env:USERPROFILE naturally differ in representation even on one
 #     Git-Bash-on-Windows machine (e.g. /c/Users/foo vs C:\Users\foo) —
-#     see the comment on Expand-ToolHome in Tools.ps1 and on
+#     see the comment on Expand-ToolPlaceholders in Tools.ps1 and on
 #     _tools_expand in tools.sh for why that omission is deliberate.
+#   - Fix round 1, Finding 1: `rlocalappdata` covers the new {LOCALAPPDATA}
+#     placeholder the same way `rhome` covers {HOME} — both readers'
+#     LOCALAPPDATA-equivalent variable is pointed at the same native
+#     directory as HOME/USERPROFILE, and both must expand {LOCALAPPDATA}
+#     to a path resolving to the SAME file on disk.
 # =====================================================================
 PWSH_BIN=""
 if command -v pwsh >/dev/null 2>&1; then
@@ -342,26 +477,29 @@ rtwo|optional|all|jar|-|-|$native_home/rtwo-candidate.jar|-|-|-|-|Cross-reader c
 rthree|required|all|path|-|RTHREE_ENV|$native_home/rthree-candidate|-|-|-|-|Cross-reader env-invalid-falls-through test
 rfour|optional|all|path|-|-|$native_home/rfour-candidate-MISSING|-|-|-|-|Cross-reader tool-missing test
 rhome|required|all|path|-|-|{HOME}/rhome-candidate|-|-|-|-|Cross-reader HOME-expansion test
+rlocalappdata|required|all|path|-|-|{LOCALAPPDATA}/rlocalappdata-candidate|-|-|-|-|Cross-reader LOCALAPPDATA-expansion test
 rtrail|required|all|path|-|-|-|-|-|-|-|
 PSV
 
   touch "$cross_home/rone-env-target" "$cross_home/rone-candidate" \
         "$cross_home/rtwo-candidate.jar" "$cross_home/rthree-candidate" \
-        "$cross_home/rhome-candidate"
+        "$cross_home/rhome-candidate" "$cross_home/rlocalappdata-candidate"
   # rfour-candidate-MISSING deliberately not created.
 
   rone_env_native="$native_home/rone-env-target"
   rthree_env_missing_native="$native_home/rthree-env-target-MISSING"
   rhome_candidate_native="$native_home/rhome-candidate"
+  rlocalappdata_candidate_native="$native_home/rlocalappdata-candidate"
   native_cross_root=$(to_native_path "$cross_root")
   native_tools_ps1=$(to_native_path "$TOOLS_PS1")
 
   bash_cross_out=$(CLAUDE_PLUGIN_ROOT="$cross_root" TOOLS_SH_PATH="$TOOLS_SH" \
-    HOME="$native_home" RONE_ENV="$rone_env_native" RTHREE_ENV="$rthree_env_missing_native" \
+    HOME="$native_home" LOCALAPPDATA="$native_home" \
+    RONE_ENV="$rone_env_native" RTHREE_ENV="$rthree_env_missing_native" \
     "${BASH:-bash}" -c '
       . "$TOOLS_SH_PATH"
       printf "LIST=%s\n" "$(tool_list | tr "\n" ",")"
-      for id in rone rtwo rthree rfour rhome rtrail; do
+      for id in rone rtwo rthree rfour rhome rlocalappdata rtrail; do
         for col in kind env_override candidates required purpose; do
           v=$(tool_field "$id" "$col")
           if [ $? -ne 0 ]; then v="<NULL>"; fi
@@ -380,7 +518,7 @@ $ErrorActionPreference = 'Stop'
 . $env:TOOLS_PS1_PATH
 $ids = Get-ToolList
 Write-Output ("LIST=" + (($ids -join ',') + ','))
-foreach ($id in @('rone', 'rtwo', 'rthree', 'rfour', 'rhome', 'rtrail')) {
+foreach ($id in @('rone', 'rtwo', 'rthree', 'rfour', 'rhome', 'rlocalappdata', 'rtrail')) {
     foreach ($col in @('kind', 'env_override', 'candidates', 'required', 'purpose')) {
         $v = Get-ToolField -Id $id -Column $col
         if ($null -eq $v) { $v = '<NULL>' }
@@ -401,15 +539,16 @@ EOF
   # data itself, so it does not fall into the over-normalization trap
   # (§6.2 shape 4) — a real divergence in a field VALUE survives this.
   ps_cross_out=$(CLAUDE_PLUGIN_ROOT="$native_cross_root" TOOLS_PS1_PATH="$native_tools_ps1" \
-    USERPROFILE="$native_home" RONE_ENV="$rone_env_native" RTHREE_ENV="$rthree_env_missing_native" \
+    USERPROFILE="$native_home" LOCALAPPDATA="$native_home" \
+    RONE_ENV="$rone_env_native" RTHREE_ENV="$rthree_env_missing_native" \
     "$PWSH_BIN" -NoProfile -NonInteractive -File "$ps_script" 2>&1 | tr -d '\r')
 
   # --- preconditions (§6.2 shapes 1 & 2), asserted BEFORE the full-output
   # comparison, each against a specific known-non-empty expected value ---
-  assert_contains "$bash_cross_out" "LIST=rone,rtwo,rthree,rfour,rhome,rtrail," \
-    "[win] precondition: tools.sh loaded the cross-reader fixture (tool_list returns the expected 6 ids, skipping the comment/blank rows)"
-  assert_contains "$ps_cross_out" "LIST=rone,rtwo,rthree,rfour,rhome,rtrail," \
-    "[win] precondition: Tools.ps1 loaded the cross-reader fixture (Get-ToolList returns the expected 6 ids, skipping the comment/blank rows)"
+  assert_contains "$bash_cross_out" "LIST=rone,rtwo,rthree,rfour,rhome,rlocalappdata,rtrail," \
+    "[win] precondition: tools.sh loaded the cross-reader fixture (tool_list returns the expected 7 ids, skipping the comment/blank rows)"
+  assert_contains "$ps_cross_out" "LIST=rone,rtwo,rthree,rfour,rhome,rlocalappdata,rtrail," \
+    "[win] precondition: Tools.ps1 loaded the cross-reader fixture (Get-ToolList returns the expected 7 ids, skipping the comment/blank rows)"
   assert_contains "$bash_cross_out" "RESOLVE=rone|$rone_env_native" \
     "[win] precondition: tools.sh resolves rone via env override to the expected non-empty path"
   assert_contains "$ps_cross_out" "RESOLVE=rone|$rone_env_native" \
@@ -432,6 +571,14 @@ EOF
     "[win] precondition: tools.sh expands {HOME} in a candidate path to the expected non-empty resolved path"
   assert_contains "$ps_cross_out" "RESOLVE=rhome|$rhome_candidate_native" \
     "[win] Tools.ps1 expands {HOME} to the same resolved file tools.sh does, when both point at the same native directory"
+
+  # --- Fix round 1, Finding 1: both readers expand {LOCALAPPDATA} to a
+  # path resolving to the same file on disk, when pointed at the same
+  # native directory ---
+  assert_contains "$bash_cross_out" "RESOLVE=rlocalappdata|$rlocalappdata_candidate_native" \
+    "[win] precondition: tools.sh expands {LOCALAPPDATA} in a candidate path to the expected non-empty resolved path (fix round 1, Finding 1)"
+  assert_contains "$ps_cross_out" "RESOLVE=rlocalappdata|$rlocalappdata_candidate_native" \
+    "[win] Tools.ps1 expands {LOCALAPPDATA} to the same resolved file tools.sh does, when both point at the same native directory (fix round 1, Finding 1)"
 
   # --- the actual cross-reader comparison: verbatim, no normalization ---
   assert_equals "$bash_cross_out" "$ps_cross_out" \
