@@ -1,0 +1,36 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  suite:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report the shell under test
+        shell: bash
+        run: |
+          bash --version | head -1
+          echo "default /bin/bash:"
+          /bin/bash --version 2>/dev/null | head -1 || echo "(no /bin/bash)"
+
+      - name: Run the suite
+        shell: bash
+        run: bash tests/run-tests.sh
+
+      - name: Run the suite under /bin/bash
+        if: runner.os == 'macOS'
+        run: /bin/bash tests/run-tests.sh
+
+      - name: Run mutations
+        shell: bash
+        run: bash tests/run-mutations.sh
