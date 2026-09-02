@@ -1,5 +1,15 @@
 name: tests
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Deliberately a bare `push:` rather than `push: branches: [master]`: this
+# lets a hotfix branch be validated by CI before it is merged, not only
+# after. Controller ruling — keep as-is.
 on:
   push:
   pull_request:
@@ -19,18 +29,46 @@ jobs:
       - name: Report the shell under test
         shell: bash
         run: |
-          bash --version | head -1
+          bash -c 'echo "$BASH_VERSION"'
           echo "default /bin/bash:"
-          /bin/bash --version 2>/dev/null | head -1 || echo "(no /bin/bash)"
+          /bin/bash -c 'echo "$BASH_VERSION"' 2>/dev/null || echo "(no /bin/bash)"
 
       - name: Run the suite
         shell: bash
         run: bash tests/run-tests.sh
 
+      # /bin/bash is the whole reason this job runs on macOS: stock macOS
+      # ships bash 3.2, and that is the interpreter the plugin's scripts
+      # must keep working under. run-tests.sh and every script it launches
+      # now propagate "${BASH:-bash}" instead of a bare `bash` resolved
+      # from PATH, so this actually puts the suite (and, transitively,
+      # every script under test) under 3.2 — it used to only put
+      # run-tests.sh itself there. The next step asserts that, rather than
+      # just printing it: a step that reports without asserting is exactly
+      # how that gap survived undetected before.
       - name: Run the suite under /bin/bash
         if: runner.os == 'macOS'
-        run: /bin/bash tests/run-tests.sh
+        run: /bin/bash tests/run-tests.sh | tee bin-bash-run.log
+
+      - name: Assert the /bin/bash run actually used bash 3.2
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if ! grep -q '^bash version: 3\.2\.' bin-bash-run.log; then
+            echo "ERROR: the /bin/bash run did not report bash 3.2.x." >&2
+            echo "        The macOS 3.2-compatibility claim is unverified." >&2
+            grep '^bash version:' bin-bash-run.log >&2 || echo "(no 'bash version:' line found)" >&2
+            exit 1
+          fi
+          echo "Confirmed: /bin/bash run-tests.sh ran under $(grep '^bash version:' bin-bash-run.log)"
 
       - name: Run mutations
         shell: bash
         run: bash tests/run-mutations.sh
+
+      # Meaningful only once the interpreter-propagation above is in place:
+      # otherwise "mutations under /bin/bash" is just a second run of the
+      # same modern bash resolved from PATH, proving nothing new.
+      - name: Run mutations under /bin/bash
+        if: runner.os == 'macOS'
+        run: /bin/bash tests/run-mutations.sh
