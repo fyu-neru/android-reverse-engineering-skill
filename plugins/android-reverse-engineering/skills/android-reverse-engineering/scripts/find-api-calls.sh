@@ -100,7 +100,7 @@ run_grep() {
 if [[ "$SEARCH_ALL" == true ]]; then
   section "Summary (counted in a single pass)"
   # Plain variables rather than an associative array: bash 3.2 (stock
-  # macOS) lacks that construct.
+  # macOS) has no declare -A.
   h_retrofit=0; h_okhttp=0; h_ktor=0; h_apollo=0; h_volley=0
   h_hilt=0; h_koin=0; h_bearer=0; h_hmac=0
   while IFS= read -r line; do

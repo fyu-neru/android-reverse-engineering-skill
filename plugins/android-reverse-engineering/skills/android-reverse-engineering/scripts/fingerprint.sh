@@ -34,7 +34,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 # Resolve to a list of APKs (handle XAPK = ZIP of APKs)
 APKS=()
-# bash 3.2 (stock macOS) has no lowercase-fold expansion; fold with tr instead.
+# bash 3.2 (stock macOS) has no ${var,,}; fold with tr instead.
 INPUT_LOWER=$(printf '%s' "$INPUT" | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')
 case "$INPUT_LOWER" in
   *.xapk|*.apks|*.apkm)
