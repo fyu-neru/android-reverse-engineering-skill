@@ -211,7 +211,8 @@ for m in "$TESTS_DIR"/mutations/*.mutation; do
     else
       echo "  SURVIVED - $name: suite went RED, but not via the expected guard (EXPECT: $expect)"
       echo "             This mutation is being killed by an unrelated failure, not the"
-      echo "             guard it claims to exercise — recorded as unguarded."
+      echo "             guard it claims to exercise — recorded as unguarded. Actual failures:"
+      printf '%s\n' "$fail_lines" | sed 's/^/             /'
       survived=$((survived + 1)); survivors="$survivors $name"
     fi
   fi
