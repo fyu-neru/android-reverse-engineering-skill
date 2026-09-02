@@ -86,5 +86,62 @@ assert_contains "$output" "=== Extracting XAPK archive ===" \
 assert_equals "$after" "$before" \
   "D3: no xapk-extract-* temp dir is left behind on unzip failure"
 
+# --- D3 (signal half): SIGTERM sent while decompile.sh is mid-extraction
+# must also remove the temp dir. The trap above only proves the EXIT path;
+# EXIT INT TERM was specifically added because EXIT alone does not fire
+# when the process is killed by an untrapped signal — a bare `trap ... EXIT`
+# never runs at all in that case (nothing to "fall through" to), it isn't
+# just "runs late". A stub `unzip` that sleeps gives a real window to
+# deliver SIGTERM while XAPK_EXTRACTED_DIR still exists and the process is
+# still alive; the wait afterwards is generous because a genuinely-trapped
+# signal is deferred by bash until the current foreground command (the
+# sleeping stub) finishes, not delivered instantly.
+work4=$(new_tmpdir)
+echo "not a zip" > "$work4/bundle.xapk"
+bin4=$(new_tmpdir)
+make_stub_bin "$bin4" unzip 'sleep 3
+exit 1'
+
+# Snapshot pre-existing xapk-extract-* dirs first: run-mutations.sh invokes
+# this whole suite many times in the same environment, so a dir left over
+# by an earlier iteration (possibly the very defect this test is proving
+# exists) must not be mistaken for the one this invocation creates.
+before_dirs=$(ls -d "${TMPDIR:-/tmp}"/xapk-extract-* 2>/dev/null || true)
+
+( cd "$work4" && PATH="$bin4:$PATH" exec "${BASH:-bash}" "$SCRIPT" bundle.xapk ) >"$work4/sigterm-out.log" 2>&1 &
+sig_pid=$!
+
+sleep 1
+sig_dir=""
+for d in "${TMPDIR:-/tmp}"/xapk-extract-*; do
+  [ -d "$d" ] || continue
+  case "$before_dirs" in
+    *"$d"*) ;;
+    *) sig_dir="$d" ;;
+  esac
+done
+
+if [ -z "$sig_dir" ]; then
+  _fail "D3 (signal): SIGTERM mid-XAPK-extraction still removes the temp dir" \
+    "setup: no xapk-extract-* temp dir appeared before the signal was sent"
+  kill -TERM "$sig_pid" 2>/dev/null || true
+else
+  kill -TERM "$sig_pid" 2>/dev/null || true
+  waited=0
+  while kill -0 "$sig_pid" 2>/dev/null && [ "$waited" -lt 8 ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if [ -d "$sig_dir" ]; then
+    assert_equals "exists" "gone" \
+      "D3 (signal): SIGTERM mid-XAPK-extraction still removes the temp dir"
+  else
+    assert_equals "gone" "gone" \
+      "D3 (signal): SIGTERM mid-XAPK-extraction still removes the temp dir"
+  fi
+fi
+# Make sure nothing from this sub-test is still running before we exit.
+kill -0 "$sig_pid" 2>/dev/null && kill -KILL "$sig_pid" 2>/dev/null || true
+
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
