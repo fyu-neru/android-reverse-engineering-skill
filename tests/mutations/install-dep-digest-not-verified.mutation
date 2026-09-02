@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/install-dep.sh
+FIND:  if ! verify_digest "$id" "$tmp" "$expected_digest"; then
+REPLACE:  if false; then
+EXPECT:exits 1 (not 0, not 2) on a digest mismatch

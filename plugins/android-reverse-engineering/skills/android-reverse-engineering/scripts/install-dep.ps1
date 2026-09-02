@@ -70,26 +70,59 @@ function Invoke-Download {
     Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing
 }
 
-# --- Helper: get latest GitHub release tag ---
-function Get-GHLatestTag {
+# --- Helper: get the latest GitHub release, tag AND all its assets'
+# digests, from ONE API call — Invoke-RestMethod already parses the JSON,
+# so (unlike tools.sh) no separate digest-extraction step is needed: the
+# per-asset "digest" field is just $release.assets[i].digest.
+function Get-GHLatestRelease {
     param([string]$Repo)
     $url = "https://api.github.com/repos/$Repo/releases/latest"
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     try {
-        $response = Invoke-RestMethod -Uri $url -UseBasicParsing
+        return Invoke-RestMethod -Uri $url -UseBasicParsing
     } catch {
         return $null
     }
-    return $response.tag_name
+}
+
+# Confirm-Digest -Tool <id> -Path <file> -Expected <sha256:hex>
+# Refuses (returns $false) on any mismatch, or if a digest could not be
+# computed at all — it never falls through to "probably fine". Never call
+# with an empty -Expected; the caller decides what "nothing to verify
+# against" means (Get-GHReleaseDownload treats it as a manual-action case,
+# not an implicit pass).
+function Confirm-Digest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tool,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Expected
+    )
+    $actual = "sha256:" + (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $Expected) {
+        Write-Fail "Digest mismatch for $Tool`: expected $Expected, got $actual. Refusing to install a possibly corrupted, truncated, swapped, or tampered download."
+        return $false
+    }
+    Write-Ok "$Tool digest verified ($Expected)"
+    return $true
 }
 
 # --- Helper: download a tools.psv-listed tool's GitHub release asset ---
 # Get-GHReleaseDownload -Id <id> -Suffix <suffix>
-# Resolves GhRepo/Asset/Pin for <id> from tools.psv, tries the live latest
-# tag first, and falls back to the pinned version when the GitHub API is
-# unreachable or rate-limited (Get-GHLatestTag returns $null). Downloads
-# the resolved asset into a fresh temp file and returns a
-# [pscustomobject]@{ Path; Version } — mirrors tools.sh's gh_release_download.
+# Resolves GhRepo/Asset/Pin/PinDigest for <id> from tools.psv, tries the
+# live latest tag first, and falls back to the pinned version when the
+# GitHub API is unreachable or rate-limited (Get-GHLatestRelease returns
+# $null). Downloads the resolved asset into a fresh temp file, verifies
+# its digest, and — only once that passes — returns a
+# [pscustomobject]@{ Path; Version }. Mirrors tools.sh's
+# gh_release_download, including its three distinct outcomes:
+#   - returns $null: the download itself failed (a genuine network
+#     failure). The caller's existing Write-Fail+Write-Manual (exit 2)
+#     handling is untouched by this.
+#   - exit 1 (from here, directly, via Confirm-Digest): the download
+#     succeeded but its digest did not match — refused, not installed,
+#     naming the tool and both digests. Never confused with the
+#     network-failure case above.
+#   - returns the downloaded file info: verified and safe to install.
 function Get-GHReleaseDownload {
     param(
         [Parameter(Mandatory = $true)][string]$Id,
@@ -98,22 +131,33 @@ function Get-GHReleaseDownload {
     $repo = Get-ToolField -Id $Id -Column 'gh_repo'
     $assetTmpl = Get-ToolField -Id $Id -Column 'asset'
     $pin = Get-ToolField -Id $Id -Column 'pin'
+    $pinDigest = Get-ToolField -Id $Id -Column 'pin_digest'
 
-    $tag = Get-GHLatestTag $repo
+    $release = Get-GHLatestRelease -Repo $repo
     $tmp = Join-Path $env:TEMP "$Id-$([guid]::NewGuid().ToString('N'))$Suffix"
 
-    if ($tag) {
+    if ($release -and $release.tag_name) {
+        $tag = $release.tag_name
         $version = $tag -replace '^v', ''
         $assetName = $assetTmpl -replace '\{VERSION\}', $version
+        $assetInfo = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+        $expectedDigest = $null
+        if ($assetInfo) { $expectedDigest = $assetInfo.digest }
         $url = "https://github.com/$repo/releases/download/$tag/$assetName"
         try {
             Invoke-Download -Url $url -Dest $tmp
         } catch {
             return $null
         }
+        if (-not $expectedDigest) {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+            Write-Fail "GitHub's release metadata for $assetName did not include a digest to verify against."
+            Write-Manual "Download and verify manually from https://github.com/$repo/releases/tag/$tag"
+        }
     } else {
         Write-Info "Could not reach the GitHub API for $repo (unreachable or rate-limited); falling back to the pinned version $pin."
         $version = $pin
+        $expectedDigest = $pinDigest
         $assetName = $assetTmpl -replace '\{VERSION\}', $version
         # The pinned version's tag prefix isn't recorded in tools.psv (jadx
         # tags "v1.5.6", Vineflower tags "1.12.0" — real per-project data,
@@ -131,8 +175,18 @@ function Get-GHReleaseDownload {
             }
         }
         if (-not $downloaded) {
+            # Both tag conventions failed to download — a genuine network
+            # failure (the API AND the release assets are unreachable),
+            # not a digest problem. Returns $null so the caller's existing
+            # Write-Fail+Write-Manual/exit-2 path handles it exactly as
+            # before this task.
             return $null
         }
+    }
+
+    if (-not (Confirm-Digest -Tool $Id -Path $tmp -Expected $expectedDigest)) {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        exit 1
     }
 
     return [pscustomobject]@{ Path = $tmp; Version = $version }

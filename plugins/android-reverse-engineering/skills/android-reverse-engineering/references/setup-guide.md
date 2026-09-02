@@ -44,6 +44,18 @@ java -version
 
 ---
 
+## Digest Verification
+
+When `install-dep.sh`/`install-dep.ps1` install jadx or Vineflower from GitHub Releases, they verify the downloaded file's sha256 against the digest GitHub reports for that exact release asset before installing it — a mismatch refuses to install (exits non-zero, naming both the expected and actual digest) rather than proceeding with a possibly-bad file.
+
+**What this defends against:** download corruption, a truncated transfer, an asset that got swapped between the moment the release tag was resolved and the moment the file was downloaded, and CDN-level tampering in transit.
+
+**What this does *not* defend against:** GitHub's own release infrastructure being compromised, or a maintainer replacing a release asset — in either case the digest GitHub reports would be updated right along with the file, so the verification would still pass. Catching that requires build provenance (a signed attestation tying the artifact back to the exact source commit and workflow run that produced it), and none of the projects this plugin depends on publish one: as of this writing, both [jadx's `release.yml`](https://github.com/skylot/jadx/blob/master/.github/workflows/release.yml) and [apktool's `build.yml`](https://github.com/iBotPeaches/Apktool/blob/master/.github/workflows/build.yml) publish through `softprops/action-gh-release` with no `attest-build-provenance` step, no cosign/sigstore signing, and no separate checksums file to cross-check against. Digest verification is real protection against the failure modes listed above — it is not a substitute for provenance, and treating it as one would be a false sense of security this plugin does not claim.
+
+The pinned fallback version used when the GitHub API is unreachable or rate-limited (`tools.psv`'s `pin`/`pin_digest` columns) is verified the same way, against a digest recorded when that version was pinned — see the comment above the `tools.psv` header for the retrieval date.
+
+---
+
 ## jadx
 
 jadx is the Java decompiler used to convert APK/JAR/AAR files to readable Java source.

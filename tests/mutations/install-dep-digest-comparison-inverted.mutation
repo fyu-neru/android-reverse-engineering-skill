@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/install-dep.sh
+FIND:  if [[ "$actual" != "$expected" ]]; then
+REPLACE:  if [[ "$actual" == "$expected" ]]; then
+EXPECT:install-dep.sh jadx accepts a download whose sha256 matches the digest from GitHub's release metadata

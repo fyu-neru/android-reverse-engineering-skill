@@ -286,15 +286,14 @@ assert_equals "$ps_extract_count" "$ps_call_site_count" \
 # separately (fix round 1, Finding 5; widened in fix round 1 on Task 3,
 # Finding 2):
 #
-#   - RESERVED_FUTURE_CONSUMER: platform, pin_digest are reserved for
-#     install-dep.sh migrations later in the 2.0.0 roadmap (design doc
-#     §7). gh_repo, asset and pin were struck from this list in the task
-#     that migrated install-dep.sh's jadx/vineflower installers onto
-#     tools.psv (they are now real tool_field consumers there); pin_digest
-#     remains reserved until the digest-verification task adds its
-#     consumer. Each remaining column is expected to gain a real consumer
-#     (in a reader OR any consumer script) in a later task, and MUST be
-#     struck from this list in that same change — otherwise
+#   - RESERVED_FUTURE_CONSUMER: platform is reserved for a later 2.0.0
+#     task (design doc §7). gh_repo, asset and pin were struck from this
+#     list when install-dep.sh's jadx/vineflower installers migrated onto
+#     tools.psv; pin_digest was struck in the digest-verification task
+#     that made it a real tool_field/Get-ToolField consumer in
+#     install-dep.sh/.ps1. Each remaining column is expected to gain a
+#     real consumer (in a reader OR any consumer script) in a later task,
+#     and MUST be struck from this list in that same change — otherwise
 #     it silently joins `used` while staying `reserved`, the allowlist
 #     union never shrinks, and nothing ever prompts anyone to edit it.
 #     The assertion below enforces that: it fails the moment any
@@ -357,7 +356,7 @@ header_line=$(head -1 "$TOOLS_PSV")
 header_fields=$(printf '%s' "$header_line" | tr '|' '\n' | grep -vFx 'id' | sort -u)
 used_fields=$(printf '%s\n%s\n' "$bash_all_fields" "$ps_all_fields" | sort -u)
 
-RESERVED_FUTURE_CONSUMER="platform pin_digest"
+RESERVED_FUTURE_CONSUMER="platform"
 DOC_ONLY_COLUMNS=""
 reserved_future_sorted=$(printf '%s\n' $RESERVED_FUTURE_CONSUMER | sort -u)
 doc_only_sorted=$(printf '%s\n' $DOC_ONLY_COLUMNS | sort -u)

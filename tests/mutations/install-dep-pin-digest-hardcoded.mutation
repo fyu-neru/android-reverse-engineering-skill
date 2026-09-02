@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/install-dep.sh
+FIND:  pin_digest=$(tool_field "$id" pin_digest) || return 1
+REPLACE:  pin_digest="-"
+EXPECT:jadx's pin-fallback install still succeeds end-to-end

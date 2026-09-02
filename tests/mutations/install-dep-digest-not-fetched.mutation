@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/install-dep.sh
+FIND:    expected_digest=$(gh_asset_digest "$asset_name")
+REPLACE:    expected_digest=""
+EXPECT:install-dep.sh jadx install succeeds end-to-end against the tools.psv-driven GitHub release path

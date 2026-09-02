@@ -1,0 +1,4 @@
+FILE:tests/test-tools-psv.sh
+FIND:RESERVED_FUTURE_CONSUMER="platform"
+REPLACE:RESERVED_FUTURE_CONSUMER="platform pin_digest"
+EXPECT:no reserved-for-future-consumer column has acquired a consumer yet

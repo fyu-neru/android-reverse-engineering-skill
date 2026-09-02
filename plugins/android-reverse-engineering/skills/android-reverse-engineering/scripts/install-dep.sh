@@ -141,56 +141,144 @@ download() {
   fi
 }
 
-# --- Helper: get latest GitHub release tag ---
+# --- Helper: get latest GitHub release tag AND the target asset's digest,
+# from the SAME API response (no second round-trip, no TOCTOU window where
+# the tag and the asset digest could come from two different releases).
+#
+# Sets GH_TAG (empty if the API is unreachable — the network-failure case
+# gh_release_download's pin fallback exists for) and GH_BODY (the raw JSON,
+# for gh_asset_digest to read afterward). Must be called directly, not via
+# command substitution ($(...)) — see gh_release_download's comment below
+# for why a subshell would silently discard both globals.
+GH_TAG=""
+GH_BODY=""
 gh_latest_tag() {
   local repo="$1"
   local url="https://api.github.com/repos/$repo/releases/latest"
-  local body=""
+  GH_TAG=""
+  GH_BODY=""
   if command -v curl &>/dev/null; then
-    body=$(curl -fsSL "$url" 2>/dev/null) || body=""
+    GH_BODY=$(curl -fsSL "$url" 2>/dev/null) || GH_BODY=""
   elif command -v wget &>/dev/null; then
-    body=$(wget -q -O - "$url" 2>/dev/null) || body=""
+    GH_BODY=$(wget -q -O - "$url" 2>/dev/null) || GH_BODY=""
   fi
-  sed -n '/"tag_name"/{s/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p;q;}' <<<"$body"
+  # <<< here-string, not a pipe: `head` is nowhere near this, so pipefail's
+  # SIGPIPE race (the reason `head` never appears after a pipe anywhere in
+  # this file) does not apply.
+  GH_TAG=$(sed -n '/"tag_name"/{s/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p;q;}' <<<"$GH_BODY")
+}
+
+# gh_asset_digest <asset_name>
+# Extracts the "digest" field of <asset_name> from GH_BODY (set by the most
+# recent gh_latest_tag call) — the SAME response gh_latest_tag already
+# fetched. Prints nothing if the asset isn't present in that response.
+# awk, not a pipe into `head`: it consumes its whole input rather than
+# exiting early, so it cannot trigger the SIGPIPE race `head` can.
+gh_asset_digest() {
+  local asset_name="$1"
+  awk -v want="\"name\": \"$asset_name\"" '
+    index($0, want) > 0 { infield = 1; next }
+    infield && index($0, "\"name\":") > 0 { infield = 0 }
+    infield && index($0, "\"digest\":") > 0 {
+      line = $0
+      sub(/^[^"]*"digest": *"/, "", line)
+      sub(/".*$/, "", line)
+      print line
+      exit
+    }
+  ' <<<"$GH_BODY"
+}
+
+# --- Helper: sha256 a file without depending on a GNU-only tool ---
+sha256_of() {
+  local f="$1"
+  if command -v sha256sum &>/dev/null; then
+    sha256sum "$f" | awk '{print $1}'
+  elif command -v shasum &>/dev/null; then
+    shasum -a 256 "$f" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+# verify_digest <tool> <file> <expected-sha256:hex>
+# Refuses on any mismatch (or on being unable to compute a digest at all) —
+# it never falls through to "probably fine". Never call this with an empty
+# <expected>; the caller must decide what "nothing to verify against"
+# means (gh_release_download below treats it as a manual-action case, not
+# as an implicit pass).
+verify_digest() {
+  local tool="$1" file="$2" expected="$3" actual
+  actual=$(sha256_of "$file") || {
+    fail "Could not compute a checksum for $tool (neither sha256sum nor shasum is available)."
+    return 1
+  }
+  actual="sha256:$actual"
+  if [[ "$actual" != "$expected" ]]; then
+    fail "Digest mismatch for $tool: expected $expected, got $actual. Refusing to install a possibly corrupted, truncated, swapped, or tampered download."
+    return 1
+  fi
+  ok "$tool digest verified ($expected)"
+  return 0
 }
 
 # --- Helper: download a tools.psv-listed tool's GitHub release asset ---
 # gh_release_download <id> <suffix>
-# Resolves gh_repo/asset/pin for <id> from tools.psv, tries the live latest
-# tag first, and falls back to the pinned version when the GitHub API is
-# unreachable or rate-limited (gh_latest_tag returns empty). Downloads the
-# resolved asset into a fresh temp file (named with <suffix>, e.g. ".zip")
-# and, on success, leaves that file's path in GH_DL_FILE and the resolved
-# version in GH_DL_VERSION — bash 3.2 has no namerefs, and this function
-# must NOT be called via command substitution ($(...)), which would fork
-# a subshell and silently discard both globals before the caller could
+# Resolves gh_repo/asset/pin/pin_digest for <id> from tools.psv, tries the
+# live latest tag first, and falls back to the pinned version when the
+# GitHub API is unreachable or rate-limited (gh_latest_tag leaves GH_TAG
+# empty). Downloads the resolved asset into a fresh temp file (named with
+# <suffix>, e.g. ".zip"), verifies its digest, and — only once that passes
+# — leaves that file's path in GH_DL_FILE and the resolved version in
+# GH_DL_VERSION. bash 3.2 has no namerefs, and this function must NOT be
+# called via command substitution ($(...)), which would fork a subshell
+# and silently discard every one of those globals before the caller could
 # read them. Call it directly and check its exit status instead.
+#
+# Three distinct outcomes, deliberately not collapsed into one:
+#   - return 1: the download itself failed (a genuine network failure —
+#     the API and/or the release asset were unreachable). The caller's
+#     existing fail+manual (exit 2) handling is untouched by this task.
+#   - exit 1 (from here, directly): the download succeeded but its digest
+#     did not match — refused, not installed, naming the tool and both
+#     digests. This must never be confused with the network-failure case
+#     above, so it does not go through "return 1" at all.
+#   - return 0: verified and safe to install.
 GH_DL_FILE=""
 GH_DL_VERSION=""
 gh_release_download() {
   local id="$1" suffix="$2"
-  local repo asset_tmpl pin tag version asset_name url tmp t
+  local repo asset_tmpl pin pin_digest tag version asset_name url tmp t expected_digest
   GH_DL_FILE=""
   GH_DL_VERSION=""
   repo=$(tool_field "$id" gh_repo) || return 1
   asset_tmpl=$(tool_field "$id" asset) || return 1
   pin=$(tool_field "$id" pin) || return 1
+  pin_digest=$(tool_field "$id" pin_digest) || return 1
 
-  tag=$(gh_latest_tag "$repo")
+  gh_latest_tag "$repo"
+  tag="$GH_TAG"
   tmp=$(mktemp "/tmp/${id}-XXXXXX${suffix}")
 
   if [[ -n "$tag" ]]; then
     version="${tag#v}"
     asset_name="${asset_tmpl//\{VERSION\}/$version}"
+    expected_digest=$(gh_asset_digest "$asset_name")
     info "Downloading $id $version..."
     url="https://github.com/$repo/releases/download/${tag}/${asset_name}"
     if ! download "$url" "$tmp"; then
       rm -f "$tmp"
       return 1
     fi
+    if [[ -z "$expected_digest" ]]; then
+      rm -f "$tmp"
+      fail "GitHub's release metadata for $asset_name did not include a digest to verify against."
+      manual "Download and verify manually from https://github.com/$repo/releases/tag/$tag"
+    fi
   else
     info "Could not reach the GitHub API for $repo (unreachable or rate-limited); falling back to the pinned version $pin."
     version="$pin"
+    expected_digest="$pin_digest"
     asset_name="${asset_tmpl//\{VERSION\}/$version}"
     info "Downloading $id $version..."
     # The pinned version's tag prefix isn't recorded in tools.psv (jadx
@@ -207,9 +295,18 @@ gh_release_download() {
       fi
     done
     if [[ -z "$tag" ]]; then
+      # Both tag conventions failed to download — a genuine network
+      # failure (the API AND the release assets are unreachable), not a
+      # digest problem. Stays a plain `return 1` so the caller's existing
+      # fail+manual/exit-2 path handles it exactly as before this task.
       rm -f "$tmp"
       return 1
     fi
+  fi
+
+  if ! verify_digest "$id" "$tmp" "$expected_digest"; then
+    rm -f "$tmp"
+    exit 1
   fi
 
   GH_DL_FILE="$tmp"
