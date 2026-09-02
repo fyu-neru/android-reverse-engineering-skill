@@ -56,5 +56,18 @@ assert_contains "$out4" "$jarpath" \
 assert_not_contains "$out4" "VINEFLOWER_CLI_SHOULD_NOT_RUN" \
   "D2 parity: decompile.sh does not run the PATH CLI when FERNFLOWER_JAR_PATH is set"
 
+bin5=$(new_tmpdir)
+make_stub_bin "$bin5" java 'echo "openjdk version \"17.0.9\" 2023-10-17" >&2
+i=0
+while [ "$i" -lt 5000 ]; do
+  echo "padding line $i to overflow the pipe buffer after the version line" >&2
+  i=$((i + 1))
+done
+exit 0'
+
+out5=$(PATH="$bin5:$PATH" bash "$SCRIPT" 2>&1)
+assert_contains "$out5" "[OK] Java 17 detected" \
+  "SIGPIPE regression: check-deps.sh must not abort when java prints thousands of lines after the version line (head -1 | SIGPIPE race)"
+
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"

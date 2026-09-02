@@ -15,11 +15,12 @@ echo
 # --- Java ---
 java_ok=false
 if command -v java &>/dev/null; then
-  java_version_output=$(java -version 2>&1 | head -1)
+  java_version_output=$(java -version 2>&1)
+  java_version_output=${java_version_output%%$'\n'*}
   java_version=$(echo "$java_version_output" | sed -n 's/.*"\([0-9]*\)\..*/\1/p')
   if [[ -z "$java_version" ]]; then
     # BSD grep has no -P. A basic-regex sed extracts the first digit run.
-    java_version=$(echo "$java_version_output" | sed -n 's/[^0-9]*\([0-9][0-9]*\).*/\1/p' | head -1)
+    java_version=$(echo "$java_version_output" | sed -n 's/[^0-9]*\([0-9][0-9]*\).*/\1/p;q')
   fi
   if [[ "$java_version" == "1" ]]; then
     java_version=$(echo "$java_version_output" | sed -n 's/.*"1\.\([0-9]*\)\..*/\1/p')

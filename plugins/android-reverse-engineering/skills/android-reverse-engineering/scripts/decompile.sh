@@ -565,7 +565,8 @@ else
   resources_dir="$OUTPUT_DIR/resources"
   if [[ -d "$sources_dir" && -d "$resources_dir" ]]; then
     java_count=$(find "$sources_dir" -name "*.java" -type f 2>/dev/null | wc -l)
-    base_apk=$(find "$resources_dir" -maxdepth 1 -name "base.apk" -type f 2>/dev/null | head -1)
+    base_apk=$(find "$resources_dir" -maxdepth 1 -name "base.apk" -type f 2>/dev/null)
+    base_apk=${base_apk%%$'\n'*}
     inner_apk_count=$(find "$resources_dir" -maxdepth 1 -name "*.apk" -type f 2>/dev/null | wc -l)
 
     if [[ "$java_count" -le 10 && -n "$base_apk" ]]; then

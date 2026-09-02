@@ -86,6 +86,38 @@ scan "no find -printf (GNU only)" '\bfind\b[^|]*-printf'
 scan "no grep -oP / -P (GNU only)" 'grep[^|]*[[:space:]]-[a-zA-Z]*P\b'
 scan "no readlink -f (GNU only)" '\breadlink[[:space:]]+-f\b'
 
+# --- SIGPIPE guard: every script under SCRIPT_DIR sets `set -euo pipefail`.
+# `head` exits as soon as it has read the lines it wants, which can send
+# SIGPIPE to a still-writing upstream command; pipefail then turns that
+# into a script-aborting failure that is load-dependent and intermittent.
+# A pipe into `head` in one of these scripts is therefore unsafe by
+# construction — require a space between the pipe and `head` so this does
+# not fire on a regex literal that merely contains "|head|" as an
+# alternation (e.g. '...(get|head|request)...'), which is not a shell pipe.
+PIPE_HEAD_REGEX='\|[[:space:]]+head\b'
+scan "no pipe into head (SIGPIPE-unsafe under set -o pipefail)" "$PIPE_HEAD_REGEX"
+
+# --- self-tests: the pipe-into-head regex must catch a real shell pipe
+# while ignoring "|head|" written as a regex-literal alternation (which
+# has no space after the pipe and is not a shell pipe at all) ---
+sc_pipehead_dir=$(new_tmpdir)
+cat > "$sc_pipehead_dir/fixture.sh" <<'EOF'
+#!/usr/bin/env bash
+v=$(some_producer | head -1)
+EOF
+sc_pipehead_hits=$(scan_hits "$sc_pipehead_dir" "$PIPE_HEAD_REGEX")
+assert_contains "$sc_pipehead_hits" '| head -1' \
+  "pipe-into-head regex self-test: catches a real shell pipe into head"
+
+sc_pipehead_regexliteral_dir=$(new_tmpdir)
+cat > "$sc_pipehead_regexliteral_dir/fixture.sh" <<'EOF'
+#!/usr/bin/env bash
+run_grep '\b(client)\.(get|post|put|delete|patch|head|request)\s*[<(]'
+EOF
+sc_pipehead_regexliteral_hits=$(scan_hits "$sc_pipehead_regexliteral_dir" "$PIPE_HEAD_REGEX")
+assert_equals "$sc_pipehead_regexliteral_hits" "" \
+  "pipe-into-head regex self-test: does not flag '|head|' inside a regex literal (no space, not a shell pipe)"
+
 # --- tests-tree guard: the test harness and test files are the only way
 # these fixes get verified on stock macOS bash 3.2, so they must run
 # there too. Scan tests/ and tests/lib/ with the same patterns.

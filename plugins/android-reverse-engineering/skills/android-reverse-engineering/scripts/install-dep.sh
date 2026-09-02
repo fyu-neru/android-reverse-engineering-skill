@@ -133,11 +133,13 @@ download() {
 gh_latest_tag() {
   local repo="$1"
   local url="https://api.github.com/repos/$repo/releases/latest"
+  local body=""
   if command -v curl &>/dev/null; then
-    curl -fsSL "$url" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/'
+    body=$(curl -fsSL "$url")
   elif command -v wget &>/dev/null; then
-    wget -q -O - "$url" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/'
+    body=$(wget -q -O - "$url")
   fi
+  sed -n '/"tag_name"/{s/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p;q;}' <<<"$body"
 }
 
 # --- Helper: add a line to shell profile if not already present ---
@@ -170,7 +172,9 @@ add_to_profile() {
 install_java() {
   if command -v java &>/dev/null; then
     local ver
-    ver=$(java -version 2>&1 | head -1 | sed -n 's/.*"\([0-9]*\)\..*/\1/p')
+    ver=$(java -version 2>&1)
+    ver=${ver%%$'\n'*}
+    ver=$(echo "$ver" | sed -n 's/.*"\([0-9]*\)\..*/\1/p')
     if [[ -n "$ver" ]] && (( ver >= 17 )); then
       ok "Java $ver already installed"
       return 0
@@ -188,7 +192,10 @@ install_java() {
 
   # Verify
   if command -v java &>/dev/null; then
-    ok "Java installed: $(java -version 2>&1 | head -1)"
+    local installed_ver_line
+    installed_ver_line=$(java -version 2>&1)
+    installed_ver_line=${installed_ver_line%%$'\n'*}
+    ok "Java installed: $installed_ver_line"
   else
     fail "Java installation may require PATH update."
     if [[ "$PKG_MANAGER" == "brew" ]]; then
@@ -364,7 +371,8 @@ install_dex2jar() {
   if [[ -f "$install_dir/d2j-dex2jar.sh" ]]; then
     bin_dir="$install_dir"
   else
-    bin_dir=$(find "$install_dir" -name "d2j-dex2jar.sh" -exec dirname {} \; | head -1)
+    bin_dir=$(find "$install_dir" -name "d2j-dex2jar.sh" -exec dirname {} \;)
+    bin_dir=${bin_dir%%$'\n'*}
   fi
 
   if [[ -z "$bin_dir" ]]; then
