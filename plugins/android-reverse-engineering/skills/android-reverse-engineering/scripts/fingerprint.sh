@@ -34,7 +34,9 @@ trap 'rm -rf "$TMP"' EXIT
 
 # Resolve to a list of APKs (handle XAPK = ZIP of APKs)
 APKS=()
-case "${INPUT,,}" in
+# bash 3.2 (stock macOS) has no lowercase-fold expansion; fold with tr instead.
+INPUT_LOWER=$(printf '%s' "$INPUT" | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')
+case "$INPUT_LOWER" in
   *.xapk|*.apks|*.apkm)
     unzip -q -o "$INPUT" -d "$TMP/xapk"
     while IFS= read -r p; do APKS+=("$p"); done < <(find "$TMP/xapk" -maxdepth 2 -type f -name '*.apk')

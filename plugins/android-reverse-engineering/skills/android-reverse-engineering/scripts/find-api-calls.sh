@@ -99,47 +99,47 @@ run_grep() {
 # the tree, counts bucketed by tag — running 8 separate greps was too slow.
 if [[ "$SEARCH_ALL" == true ]]; then
   section "Summary (counted in a single pass)"
-  declare -A H=(
-    [retrofit]=0 [okhttp]=0 [ktor]=0 [apollo]=0 [volley]=0
-    [hilt]=0 [koin]=0 [bearer]=0 [hmac]=0
-  )
+  # Plain variables rather than an associative array: bash 3.2 (stock
+  # macOS) lacks that construct.
+  h_retrofit=0; h_okhttp=0; h_ktor=0; h_apollo=0; h_volley=0
+  h_hilt=0; h_koin=0; h_bearer=0; h_hmac=0
   while IFS= read -r line; do
     case "$line" in
-      *"@GET("*|*"@POST("*|*"@PUT("*|*"@DELETE("*|*"@PATCH("*|*"@HTTP("*) H[retrofit]=$((H[retrofit]+1));;
+      *"@GET("*|*"@POST("*|*"@PUT("*|*"@DELETE("*|*"@PATCH("*|*"@HTTP("*) h_retrofit=$((h_retrofit+1));;
     esac
     case "$line" in
-      *"Request.Builder"*|*"HttpUrl"*|*".newCall("*) H[okhttp]=$((H[okhttp]+1));;
+      *"Request.Builder"*|*"HttpUrl"*|*".newCall("*) h_okhttp=$((h_okhttp+1));;
     esac
     case "$line" in
-      *"BearerTokens"*|*"defaultRequest {"*|*"client.get("*|*"client.post("*|*"httpClient.get("*|*"httpClient.post("*|*"HttpClient.get("*) H[ktor]=$((H[ktor]+1));;
+      *"BearerTokens"*|*"defaultRequest {"*|*"client.get("*|*"client.post("*|*"httpClient.get("*|*"httpClient.post("*|*"HttpClient.get("*) h_ktor=$((h_ktor+1));;
     esac
     case "$line" in
-      *"ApolloClient"*|*".serverUrl("*) H[apollo]=$((H[apollo]+1));;
+      *"ApolloClient"*|*".serverUrl("*) h_apollo=$((h_apollo+1));;
     esac
     case "$line" in
-      *"StringRequest"*|*"JsonObjectRequest"*|*"RequestQueue"*) H[volley]=$((H[volley]+1));;
+      *"StringRequest"*|*"JsonObjectRequest"*|*"RequestQueue"*) h_volley=$((h_volley+1));;
     esac
     case "$line" in
-      *"@HiltAndroidApp"*|*"@AndroidEntryPoint"*|*"@HiltViewModel"*|*"@Provides"*|*"@Binds"*) H[hilt]=$((H[hilt]+1));;
+      *"@HiltAndroidApp"*|*"@AndroidEntryPoint"*|*"@HiltViewModel"*|*"@Provides"*|*"@Binds"*) h_hilt=$((h_hilt+1));;
     esac
     case "$line" in
-      *"org.koin."*|*"module {"*|*"single<"*|*"factory<"*|*"singleOf("*|*"factoryOf("*) H[koin]=$((H[koin]+1));;
+      *"org.koin."*|*"module {"*|*"single<"*|*"factory<"*|*"singleOf("*|*"factoryOf("*) h_koin=$((h_koin+1));;
     esac
     case "$line" in
-      *'"Bearer '*|*'"bearer '*|*"BearerTokens"*) H[bearer]=$((H[bearer]+1));;
+      *'"Bearer '*|*'"bearer '*|*"BearerTokens"*) h_bearer=$((h_bearer+1));;
     esac
     case "$line" in
-      *"HmacSHA"*|*'Mac.getInstance("Hmac'*) H[hmac]=$((H[hmac]+1));;
+      *"HmacSHA"*|*'Mac.getInstance("Hmac'*) h_hmac=$((h_hmac+1));;
     esac
   done < <(grep -rEh --include='*.java' --include='*.kt' \
       '@(GET|POST|PUT|DELETE|PATCH|HTTP)\(|Request\.Builder|HttpUrl|\.newCall\(|BearerTokens|defaultRequest \{|client\.(get|post)\(|httpClient\.(get|post)\(|ApolloClient|\.serverUrl\(|StringRequest|JsonObjectRequest|RequestQueue|@HiltAndroidApp|@AndroidEntryPoint|@HiltViewModel|@Provides|@Binds|org\.koin\.|module \{|single<|factory<|"[Bb]earer |HmacSHA|Mac\.getInstance' \
       "$SOURCE_DIR" 2>/dev/null || true)
   printf '  HTTP framework:   Retrofit=%-5s OkHttp=%-5s Ktor=%-5s Apollo=%-5s Volley=%-5s\n' \
-      "${H[retrofit]}" "${H[okhttp]}" "${H[ktor]}" "${H[apollo]}" "${H[volley]}"
+      "$h_retrofit" "$h_okhttp" "$h_ktor" "$h_apollo" "$h_volley"
   printf '  DI framework:     Hilt/Dagger=%-5s Koin=%-5s\n' \
-      "${H[hilt]}" "${H[koin]}"
+      "$h_hilt" "$h_koin"
   printf '  Auth signals:     Bearer=%-5s HMAC/Sign=%-5s\n' \
-      "${H[bearer]}" "${H[hmac]}"
+      "$h_bearer" "$h_hmac"
   echo
   echo "  Run with one of --retrofit / --okhttp / --ktor / --apollo / --volley /"
   echo "  --paths / --urls / --auth to inspect a single section."

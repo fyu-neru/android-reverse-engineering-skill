@@ -37,5 +37,28 @@ out2=$(bash "$SCRIPT" --auth "$src2" 2>&1)
 assert_contains "$out2" "UPPERCASE456" \
   "D1: --auth is still case-insensitive after the fix"
 
+# --- D5: the summary counters must still count after dropping declare -A ---
+src3=$(new_tmpdir)
+mkdir -p "$src3/com/example"
+cat > "$src3/com/example/Svc.java" <<'JAVA'
+package com.example;
+interface Svc {
+    @GET("/v1/users") Call<String> a();
+    @POST("/v1/login") Call<String> b();
+}
+JAVA
+cat > "$src3/com/example/Net.java" <<'JAVA'
+package com.example;
+class Net {
+    void go() { new Request.Builder().url("https://api.example.com").build(); }
+}
+JAVA
+
+out3=$(bash "$SCRIPT" --all "$src3" 2>&1)
+assert_contains "$out3" "Retrofit=2" \
+  "D5: summary counts two Retrofit annotations without declare -A"
+assert_contains "$out3" "OkHttp=1" \
+  "D5: summary counts one OkHttp call without declare -A"
+
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
