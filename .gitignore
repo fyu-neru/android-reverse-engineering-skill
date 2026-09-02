@@ -3,3 +3,6 @@
 
 # Subagent-driven-development scratch (ledger, briefs, review packages)
 .superpowers/
+
+# Design docs and plans — kept local, never published
+docs/superpowers/
