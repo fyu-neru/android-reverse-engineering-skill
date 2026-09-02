@@ -147,5 +147,26 @@ scan "no find -printf in tests/lib (GNU only)" '\bfind\b[^|]*-printf' "$REPO_ROO
 scan "no grep -oP / -P in tests/lib (GNU only)" 'grep[^|]*[[:space:]]-[a-zA-Z]*P\b' "$REPO_ROOT/tests/lib"
 scan "no readlink -f in tests/lib (GNU only)" '\breadlink[[:space:]]+-f\b' "$REPO_ROOT/tests/lib"
 
+# --- empty-array guard: ${arr[@]+"${arr[@]}"} sites ---
+# bash 3.2 errors on "${arr[@]}" under set -u when arr has zero elements
+# (fixed in bash 4.4); the guarded form ${arr[@]+"${arr[@]}"} is required
+# everywhere a possibly-empty array is expanded under `set -u`. There is
+# no static scan for this (unlike the D4/D5 constructs above) because the
+# guarded and unguarded forms differ only by the presence of `${arr[@]+…}`
+# around an otherwise-identical expansion — a functional test is the only
+# way to catch a reversion. harness.sh's cleanup_tmpdirs() is exercised by
+# every test file, but always with a non-empty TEST_TMPDIRS by the time it
+# runs (every file calls new_tmpdir() at least once first), so the empty
+# case needs its own direct exercise here.
+sc_emptyarr_out=$(
+  set -uo pipefail
+  # shellcheck disable=SC1090
+  . "$REPO_ROOT/tests/lib/harness.sh"
+  cleanup_tmpdirs
+  echo OK
+)
+assert_equals "$sc_emptyarr_out" "OK" \
+  "harness.sh: cleanup_tmpdirs() does not error on an empty TEST_TMPDIRS array under set -u"
+
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"

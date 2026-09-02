@@ -1,0 +1,5 @@
+FILE:tests/lib/harness.sh
+FIND:  for d in ${TEST_TMPDIRS[@]+"${TEST_TMPDIRS[@]}"}; do
+REPLACE:  for d in "${TEST_TMPDIRS[@]}"; do
+EXPECT:harness.sh: cleanup_tmpdirs() does not error on an empty TEST_TMPDIRS array under set -u
+REQUIRES:bash<4.4
