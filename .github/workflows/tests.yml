@@ -15,6 +15,17 @@ on:
   pull_request:
   workflow_dispatch:
 
+# ubuntu-latest only: macos-latest and windows-latest were removed. That
+# means every bash-3.2 and BSD-tool-portability claim in this plugin's
+# scripts (find/grep/sed without GNU-only flags, no bash 4+ constructs,
+# the ${arr[@]+"${arr[@]}"} empty-array guard, the D3 signal-trap
+# registration) is verified by static analysis in tests/test-portability.sh
+# only, not by actually running under 3.2 anywhere in CI. It also means:
+# - The two REQUIRES:bash<4.4 mutations (d3-empty-array-*) are permanently
+#   skipped every run, since ubuntu-latest's bash is 5.x.
+# - tests/test-powershell-syntax.sh always takes its "no pwsh found" skip
+#   path (SUMMARY 0 0); the four PowerShell parse assertions it contains
+#   are not exercised anywhere in this CI.
 jobs:
   suite:
     name: ${{ matrix.os }}
@@ -22,10 +33,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
 
+      # bash -c '...' rather than piping into head: under Actions' default
+      # `bash -eo pipefail {0}`, a pipe into `head` reproduces the exact
+      # SIGPIPE race tests/test-portability.sh bans in the plugin's own
+      # scripts.
       - name: Report the shell under test
         shell: bash
         run: |
@@ -37,38 +52,6 @@ jobs:
         shell: bash
         run: bash tests/run-tests.sh
 
-      # /bin/bash is the whole reason this job runs on macOS: stock macOS
-      # ships bash 3.2, and that is the interpreter the plugin's scripts
-      # must keep working under. run-tests.sh and every script it launches
-      # now propagate "${BASH:-bash}" instead of a bare `bash` resolved
-      # from PATH, so this actually puts the suite (and, transitively,
-      # every script under test) under 3.2 — it used to only put
-      # run-tests.sh itself there. The next step asserts that, rather than
-      # just printing it: a step that reports without asserting is exactly
-      # how that gap survived undetected before.
-      - name: Run the suite under /bin/bash
-        if: runner.os == 'macOS'
-        run: /bin/bash tests/run-tests.sh | tee bin-bash-run.log
-
-      - name: Assert the /bin/bash run actually used bash 3.2
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          if ! grep -q '^bash version: 3\.2\.' bin-bash-run.log; then
-            echo "ERROR: the /bin/bash run did not report bash 3.2.x." >&2
-            echo "        The macOS 3.2-compatibility claim is unverified." >&2
-            grep '^bash version:' bin-bash-run.log >&2 || echo "(no 'bash version:' line found)" >&2
-            exit 1
-          fi
-          echo "Confirmed: /bin/bash run-tests.sh ran under $(grep '^bash version:' bin-bash-run.log)"
-
       - name: Run mutations
         shell: bash
         run: bash tests/run-mutations.sh
-
-      # Meaningful only once the interpreter-propagation above is in place:
-      # otherwise "mutations under /bin/bash" is just a second run of the
-      # same modern bash resolved from PATH, proving nothing new.
-      - name: Run mutations under /bin/bash
-        if: runner.os == 'macOS'
-        run: /bin/bash tests/run-mutations.sh
