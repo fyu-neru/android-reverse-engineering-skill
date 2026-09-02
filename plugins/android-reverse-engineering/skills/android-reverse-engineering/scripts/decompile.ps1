@@ -101,7 +101,14 @@ if (-not $Output) {
 function Invoke-Jadx {
     param([string]$OutDir, [string]$FileAbs, [string]$FileExt)
 
-    if (-not (Get-Command jadx -ErrorAction SilentlyContinue)) {
+    # Resolved via Resolve-Tool (env override -> PATH probe -> tools.psv
+    # candidates), the same resolution order check-deps.ps1 reports
+    # against. A bare Get-Command here would miss a jadx that
+    # install-dep.ps1 just placed at one of tools.psv's candidate paths -
+    # exactly the install-then-can't-find-it divergence between
+    # check-deps and decompile this resolution layer exists to eliminate.
+    $jadxCmd = Resolve-Tool -Id 'jadx'
+    if (-not $jadxCmd) {
         Write-Host "Error: jadx is not installed or not in PATH." -ForegroundColor Red
         return $false
     }
@@ -112,8 +119,15 @@ function Invoke-Jadx {
     $jadxArgs += '--show-bad-code'
     $jadxArgs += $FileAbs
 
-    Write-Host "Running: jadx $($jadxArgs -join ' ')"
-    & jadx @jadxArgs
+    Write-Host "Running: $($jadxCmd.Path) $($jadxArgs -join ' ')"
+    # Piped through Out-Host rather than left as a bare native-command
+    # call: Invoke-DecompileSingle's caller now captures ITS return value
+    # (the C1 fix), and PowerShell folds an unconsumed native command's
+    # stdout into the enclosing function's own return value right
+    # alongside that boolean - which would silently swallow every line of
+    # real jadx output into $decompileOk instead of ever reaching the
+    # console.
+    & $jadxCmd.Path @jadxArgs | Out-Host
 
     $sourcesDir = Join-Path $OutDir 'sources'
     if (Test-Path $sourcesDir) {
@@ -157,12 +171,17 @@ function Invoke-Fernflower {
     $ffArgs += $jarToDecompile
     $ffArgs += $OutDir
 
+    # Piped through Out-Host for the same reason as the jadx invocation
+    # above: Invoke-DecompileSingle's caller now captures ITS return
+    # value, and a bare native-command call here would have Vineflower's
+    # console output silently folded into that captured boolean instead
+    # of ever being displayed.
     if ($ffCmd.Kind -eq 'cli') {
         Write-Host "Running: $($ffCmd.Path) $($ffArgs -join ' ')"
-        & $ffCmd.Path @ffArgs
+        & $ffCmd.Path @ffArgs | Out-Host
     } else {
         Write-Host "Running: java -jar $($ffCmd.Path) $($ffArgs -join ' ')"
-        & java -jar $ffCmd.Path @ffArgs
+        & java -jar $ffCmd.Path @ffArgs | Out-Host
     }
 
     # Fernflower outputs a JAR containing .java files — extract it
@@ -184,10 +203,21 @@ function Invoke-Fernflower {
 function Show-Structure {
     param([string]$SrcDir, [string]$Label)
     if (Test-Path $SrcDir) {
+        # $SrcDir arrives relative in the common case ($Output defaults to
+        # a relative "<name>-decompiled"). Resolve it to an absolute path
+        # BEFORE stripping it as a prefix below: comparing a relative
+        # $SrcDir against Get-ChildItem's always-absolute .FullName never
+        # matches, so the prefix strip silently no-ops, every entry keeps
+        # its full "C:\...\<name>-decompiled\sources\..." path, and
+        # ($_ -split '\\')[0] evaluates to "C:" for every single entry -
+        # collapsing the single-letter-vs-named split below into one
+        # bucket and making the crowding-out fix inert on the path users
+        # actually take.
+        $srcDirAbs = (Resolve-Path -LiteralPath $SrcDir).Path
         Write-Host ""
         Write-Host "Top-level packages ($Label):"
-        $packages = Get-ChildItem -Path $SrcDir -Directory -Recurse -Depth 2 |
-            ForEach-Object { $_.FullName.Replace("$SrcDir\", '') } |
+        $packages = Get-ChildItem -Path $srcDirAbs -Directory -Recurse -Depth 2 |
+            ForEach-Object { $_.FullName.Replace("$srcDirAbs\", '') } |
             Sort-Object
 
         $total = $packages.Count
@@ -208,7 +238,13 @@ function Show-Structure {
         $single = @($packages | Where-Object { ($_ -split '\\')[0].Length -eq 1 })
         $ordered = @($named) + @($single)
 
-        $ordered | Select-Object -First $cap
+        # Write-Host explicitly rather than letting these objects fall
+        # through to the success/output stream: Invoke-DecompileSingle's
+        # caller now captures ITS return value (the C1 fix), and a bare
+        # pipeline emission here would be swept into that capture right
+        # alongside the boolean, silently disappearing from the console
+        # instead of ever being displayed.
+        $ordered | Select-Object -First $cap | ForEach-Object { Write-Host $_ }
 
         if ($total -gt $cap) {
             Write-Host "... and $($total - $cap) more (showing $cap of $total; single-letter package dirs are listed last)"
@@ -226,21 +262,35 @@ function Invoke-DecompileSingle {
         Write-Host "=== Decompiling $Label (engine: $Engine) ==="
     }
 
+    # Both branches below capture the engine functions' boolean return
+    # value into a variable rather than leaving the call as a bare
+    # statement. In PowerShell, a function's return value that is neither
+    # captured nor piped becomes part of the CALLER's own output stream -
+    # so an uncaptured `$false`/`$true` here doesn't just vanish, it
+    # surfaces as a stray "False"/"True" line on stdout (via this
+    # function's own uncaptured return) AND is unavailable for deciding
+    # whether decompilation actually succeeded. That was harmless while
+    # nothing downstream checked it; it became load-bearing once the
+    # fernflower engine started refusing input and needed its failure to
+    # actually reach the caller's exit code (see the C1 fix below).
+    $engineOk = $true
+
     switch ($Engine) {
         'jadx' {
-            Invoke-Jadx -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
+            $engineOk = Invoke-Jadx -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
             Show-Structure (Join-Path $OutDir 'sources') 'jadx'
         }
         'fernflower' {
-            Invoke-Fernflower -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
+            $engineOk = Invoke-Fernflower -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
             Show-Structure (Join-Path $OutDir 'sources') 'fernflower'
         }
         'both' {
             Write-Host "--- Pass 1: jadx ---"
-            Invoke-Jadx -OutDir (Join-Path $OutDir 'jadx') -FileAbs $FileAbs -FileExt $fileExt
+            $jadxOk = Invoke-Jadx -OutDir (Join-Path $OutDir 'jadx') -FileAbs $FileAbs -FileExt $fileExt
             Write-Host ""
             Write-Host "--- Pass 2: Fernflower ---"
-            Invoke-Fernflower -OutDir (Join-Path $OutDir 'fernflower') -FileAbs $FileAbs -FileExt $fileExt
+            $ffOk = Invoke-Fernflower -OutDir (Join-Path $OutDir 'fernflower') -FileAbs $FileAbs -FileExt $fileExt
+            $engineOk = $jadxOk -and $ffOk
 
             Show-Structure (Join-Path $OutDir 'jadx\sources') 'jadx'
             Show-Structure (Join-Path $OutDir 'fernflower\sources') 'fernflower'
@@ -269,6 +319,8 @@ function Invoke-DecompileSingle {
             Write-Host "Tip: compare specific classes between jadx/ and fernflower/ to pick the better output."
         }
     }
+
+    return $engineOk
 }
 
 # --- Run ---
@@ -288,7 +340,10 @@ Write-Host ""
 # SKILL.md. The output layout also changes: previously each contained APK
 # got its own subdirectory under $Output; jadx now merges everything into
 # a single tree, same as it always has for a plain .apk.
-Invoke-DecompileSingle -FileAbs $inputFileAbs -OutDir $Output -Label ''
+$decompileOk = Invoke-DecompileSingle -FileAbs $inputFileAbs -OutDir $Output -Label ''
+if (-not $decompileOk) {
+    exit 1
+}
 
 # --- Split/bundled APK detection ---
 # Some APKs are bundles: the outer APK contains
@@ -312,7 +367,10 @@ if ((Test-Path $sourcesDir) -and (Test-Path $resourcesDir)) {
         Write-Host ""
         Write-Host "Decompiling base.apk (contains the actual app code)..."
         $baseOutput = Join-Path $Output 'base'
-        Invoke-DecompileSingle -FileAbs $baseApk.FullName -OutDir $baseOutput -Label 'base.apk'
+        $baseOk = Invoke-DecompileSingle -FileAbs $baseApk.FullName -OutDir $baseOutput -Label 'base.apk'
+        if (-not $baseOk) {
+            exit 1
+        }
 
         # Decompile any split APKs that aren't just config splits
         $splitApks = $innerApks | Where-Object { $_.Name -ne 'base.apk' -and $_.Name -notmatch 'split_config\.' }
@@ -320,7 +378,10 @@ if ((Test-Path $sourcesDir) -and (Test-Path $resourcesDir)) {
             $splitName = [IO.Path]::GetFileNameWithoutExtension($split.Name)
             Write-Host ""
             Write-Host "Decompiling $($split.Name)..."
-            Invoke-DecompileSingle -FileAbs $split.FullName -OutDir (Join-Path $Output $splitName) -Label $split.Name
+            $splitOk = Invoke-DecompileSingle -FileAbs $split.FullName -OutDir (Join-Path $Output $splitName) -Label $split.Name
+            if (-not $splitOk) {
+                exit 1
+            }
         }
 
         if ($innerApks | Where-Object { $_.Name -match 'split_config\.' }) {

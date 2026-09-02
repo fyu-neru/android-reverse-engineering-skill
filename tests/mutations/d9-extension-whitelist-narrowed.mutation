@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh
+FIND:  apk|xapk|apkm|apks|aab|dex|zip|jar|aar|class) ;;
+REPLACE:  apk|xapk|jar|aar) ;;
+EXPECT:D9: .apkm is accepted by the widened extension whitelist

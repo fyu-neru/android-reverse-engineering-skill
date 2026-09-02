@@ -76,14 +76,17 @@ widget|required|all|path|widget-cli-stub-zzz|WIDGET_ENV|{HOME}/widget-candidate|
 gadget|optional|all|jar|gadget-cli-stub-zzz|GADGET_ENV|{HOME}/gadget-candidate.jar|-|-|-|-|Gadget test tool
 sprocket|optional|all|path|sprocket-cli-stub-zzz|-|{HOME}/sprocket-candidate|-|-|-|-|Sprocket test tool
 java|required|all|path|java-cli-stub-zzz|JAVA_ENV|{HOME}/java-candidate|-|-|-|-|Java stub for tool_argv jar-kind test
+gadgetcli|optional|all|jar|gadgetcli-stub-zzz|-|{HOME}/gadgetcli-candidate.jar|-|-|-|-|Gadget CLI test: jar-kind tool actually found via PATH probe
 PSV
 
 fixhome=$(new_tmpdir)
 touch "$fixhome/widget-candidate" "$fixhome/widget-env-target" \
-      "$fixhome/gadget-candidate.jar" "$fixhome/java-candidate"
+      "$fixhome/gadget-candidate.jar" "$fixhome/java-candidate" \
+      "$fixhome/gadgetcli-candidate.jar"
 
 stubbin=$(new_tmpdir)
 make_stub_bin "$stubbin" widget-cli-stub-zzz 'exit 0'
+make_stub_bin "$stubbin" gadgetcli-stub-zzz 'exit 0'
 emptybin=$(new_tmpdir)
 
 # =====================================================================
@@ -92,7 +95,7 @@ emptybin=$(new_tmpdir)
 # zero rows, which reads as agreement unless the count itself is checked
 # against a known-nonzero expectation first).
 # =====================================================================
-expected_rows=4
+expected_rows=5
 if [ "$expected_rows" -gt 0 ]; then _rows_state=nonzero; else _rows_state=zero; fi
 assert_equals "$_rows_state" "nonzero" \
   "[all] precondition: expected fixture row count is non-zero before comparing"
@@ -104,7 +107,7 @@ assert_equals "$actual_rows" "$expected_rows" \
   "[all] tool_list row count equals the fixture's non-comment, non-blank data row count (fixture-load guard)"
 
 bash_ids_sorted=$(printf '%s\n' "$bash_ids" | sort)
-assert_equals "$bash_ids_sorted" "$(printf 'gadget\njava\nsprocket\nwidget\n')" \
+assert_equals "$bash_ids_sorted" "$(printf 'gadget\ngadgetcli\njava\nsprocket\nwidget\n')" \
   "[all] tool_list returns exactly the fixture's ids (not merely the right count)"
 
 # =====================================================================
@@ -168,6 +171,26 @@ assert_equals "$argv_jar_elem1" "-jar" \
   "[all] tool_argv: kind=jar's second element is the literal -jar flag"
 assert_equals "$argv_jar_elem2" "$fixhome/gadget-candidate.jar" \
   "[all] tool_argv: kind=jar's third element is the resolved jar path"
+
+# --- Task 4 review C1 root cause: a kind=jar tool (per tools.psv) that is
+# actually found via the PATH probe as a real CLI (e.g. a package
+# manager's launcher script) must be run directly - a single-element
+# TOOL_ARGV - not wrapped in `java -jar <that CLI's path>`, which fails
+# immediately. Before this was fixed, tool_argv built TOOL_ARGV purely
+# from the static PSV kind column regardless of which resolution stage
+# actually matched, so this exact case produced `java -jar
+# <stubbin>/gadgetcli-stub-zzz`. This is the reader-level test that was
+# missing: only a bash-only decompile.sh regression test (test-decompile.sh
+# D2) caught the original bug, and nothing at this level would catch a
+# regression on its own. ---
+argv_probejar_out=$(HOME="$fixhome" PATH="$stubbin:$PATH" CLAUDE_PLUGIN_ROOT="$order_root" TOOLS_SH_PATH="$TOOLS_SH" \
+  "${BASH:-bash}" -c '. "$TOOLS_SH_PATH"; tool_argv gadgetcli && printf "%s\n" "${#TOOL_ARGV[@]}" "${TOOL_ARGV[@]}"')
+argv_probejar_count=$(printf '%s\n' "$argv_probejar_out" | sed -n '1p')
+argv_probejar_elem0=$(printf '%s\n' "$argv_probejar_out" | sed -n '2p')
+assert_equals "$argv_probejar_count" "1" \
+  "[all] tool_argv: kind=jar found via PATH probe produces a single-element TOOL_ARGV (direct exec, not java -jar)"
+assert_equals "$argv_probejar_elem0" "$stubbin/gadgetcli-stub-zzz" \
+  "[all] tool_argv: kind=jar's probe-matched element is the CLI found on PATH, not the jar candidate"
 
 # =====================================================================
 # Group 4b — glob safety (fix round 1, Finding 1): a PSV field value that
@@ -642,6 +665,66 @@ EOF
 
   assert_contains "$porder_out" "RESOLVE=$porder_env_native" \
     "[win] Tools.ps1 resolution order: env override wins over PATH probe when both are present"
+
+  # =====================================================================
+  # Group 7c (Task 4 review C1/I2) — Resolve-Tool must report Kind='cli'
+  # when a jar-kind tool (per tools.psv) is actually found via the PATH
+  # probe as a real executable, not the raw .jar candidate. Before the
+  # fix, Resolve-Tool derived Kind purely from the static tools.psv kind
+  # column, so a probe match on a jar-kind id still came back Kind='jar' -
+  # and decompile.ps1 wrapped that CLI's path in `java -jar <script>`,
+  # which fails immediately (announcing failure while printing a success
+  # banner, per the C1 finding). This is the PowerShell reader-level
+  # counterpart to Group 4's bash tool_argv probe-vs-jar assertion above;
+  # until this group existed, reverting Tools.ps1's `Kind = 'cli'` back to
+  # `Kind = $kind` left every reader-level test green — only a bash-only
+  # decompile.sh test caught the bug at all, and nothing caught it on the
+  # platform it actually broke.
+  # =====================================================================
+  pcli_root=$(new_tmpdir)
+  pcli_lib="$pcli_root/skills/android-reverse-engineering/scripts/lib"
+  mkdir -p "$pcli_lib"
+  pcli_home=$(new_tmpdir)
+  native_pcli_home=$(to_native_path "$pcli_home")
+  touch "$pcli_home/pcli-candidate.jar"
+
+  cat > "$pcli_lib/tools.psv" <<PSV
+id|required|platform|kind|probe|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
+pclitool|optional|all|jar|pcli-cli-stub-zzz|-|$native_pcli_home/pcli-candidate.jar|-|-|-|-|PowerShell-only probe-kind test
+PSV
+
+  pcli_bin=$(new_tmpdir)
+  native_pcli_bin=$(to_native_path "$pcli_bin")
+  cat > "$pcli_bin/pcli-cli-stub-zzz.cmd" <<'CMD'
+@echo off
+exit /b 0
+CMD
+
+  native_pcli_root=$(to_native_path "$pcli_root")
+
+  pcli_script_dir=$(new_tmpdir)
+  pcli_script="$pcli_script_dir/pcli-check.ps1"
+  cat > "$pcli_script" <<'EOF'
+$ErrorActionPreference = 'Stop'
+$env:PATH = $env:STUB_BIN_DIR
+. $env:TOOLS_PS1_PATH
+$r = Resolve-Tool -Id 'pclitool'
+if ($null -eq $r) {
+    Write-Output 'RESOLVE=<NULL>'
+} else {
+    Write-Output ('RESOLVE_KIND=' + $r.Kind)
+    Write-Output ('RESOLVE_PATH=' + $r.Path)
+}
+EOF
+
+  pcli_out=$(CLAUDE_PLUGIN_ROOT="$native_pcli_root" TOOLS_PS1_PATH="$native_tools_ps1" \
+    STUB_BIN_DIR="$native_pcli_bin" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$pcli_script" 2>&1 | tr -d '\r')
+
+  assert_contains "$pcli_out" "RESOLVE_KIND=cli" \
+    "[win] Resolve-Tool reports Kind=cli when a jar-kind tool is actually found via the PATH probe (not wrapped in java -jar)"
+  assert_contains "$pcli_out" "pcli-cli-stub-zzz.cmd" \
+    "[win] Resolve-Tool's probe-matched Path names the CLI found on PATH, not the jar candidate"
 fi
 
 cleanup_tmpdirs

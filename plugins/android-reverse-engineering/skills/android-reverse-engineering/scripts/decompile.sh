@@ -108,7 +108,13 @@ run_jadx() {
   local jadx_status=0
   local count=0
 
-  if ! command -v jadx &>/dev/null; then
+  # Resolved via tool_argv (env override -> PATH probe -> tools.psv
+  # candidates), the same resolution order check-deps.sh reports against.
+  # A bare `command -v jadx` here would miss a jadx that install-dep.sh
+  # just placed at one of tools.psv's candidate paths — exactly the
+  # install-then-can't-find-it divergence between check-deps and decompile
+  # this resolution layer exists to eliminate.
+  if ! tool_argv jadx; then
     echo "Error: jadx is not installed or not in PATH." >&2
     return 1
   fi
@@ -120,8 +126,8 @@ run_jadx() {
   args+=("--show-bad-code")
   args+=("$INPUT_FILE_ABS")
 
-  echo "Running: jadx ${args[*]}"
-  if jadx "${args[@]}"; then
+  echo "Running: ${TOOL_ARGV[*]} ${args[*]}"
+  if "${TOOL_ARGV[@]}" "${args[@]}"; then
     jadx_status=0
   else
     jadx_status=$?

@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/tools.sh
+FIND:    if [ -n "$matched_probe" ]; then
+REPLACE:    if false; then # mutation: never treat a probe match as directly executable
+EXPECT:tool_argv: kind=jar found via PATH probe produces a single-element TOOL_ARGV

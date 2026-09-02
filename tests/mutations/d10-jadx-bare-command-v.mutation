@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh
+FIND:  if ! tool_argv jadx; then
+REPLACE:  if ! command -v jadx &>/dev/null; then
+EXPECT:D10: decompile finds jadx via a tools.psv candidate path when nothing is on PATH

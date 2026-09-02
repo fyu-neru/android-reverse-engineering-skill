@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.ps1
+FIND:            $engineOk = Invoke-Fernflower -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
+REPLACE:            Invoke-Fernflower -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
+EXPECT:D11: decompile.ps1 --Engine fernflower on a .apk exits non-zero

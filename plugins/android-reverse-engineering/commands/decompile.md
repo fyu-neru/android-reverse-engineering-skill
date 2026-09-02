@@ -16,7 +16,7 @@ You are starting the Android reverse engineering workflow. Follow these steps:
 
 ### Step 1: Get the target file
 
-If the user provided a file path as an argument, use that. Otherwise, ask the user for the path to the APK, XAPK, JAR, or AAR file they want to decompile.
+If the user provided a file path as an argument, use that. Otherwise, ask the user for the path to the APK, XAPK, APKM, APKS, AAB, DEX, ZIP, JAR, AAR, or class file they want to decompile.
 
 ### Step 2: Check and install dependencies
 
@@ -37,7 +37,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/install-de
 
 The install script auto-detects the OS and installs without sudo when possible (user-local install to `~/.local/`). If sudo is needed, it will prompt — if the user declines or sudo is unavailable, the script prints exact manual instructions (exit code 2). Show those instructions to the user and stop.
 
-**For optional dependencies** (`INSTALL_OPTIONAL:vineflower`, `INSTALL_OPTIONAL:dex2jar`, etc.), ask the user if they want to install them. Recommend vineflower and dex2jar for better results.
+**For optional dependencies** (`INSTALL_OPTIONAL:vineflower`, etc.), ask the user if they want to install them. Recommend vineflower for better results on JAR/AAR/class files (it is not used for APK-family files at all — see Step 3).
 
 After any installations, re-run `check-deps.sh` to verify. Do not proceed until all required dependencies pass.
 
@@ -45,13 +45,13 @@ After any installations, re-run `check-deps.sh` to verify. Do not proceed until 
 
 Run the decompile script on the target file. Choose the engine based on the input:
 
-- **APK or XAPK** → use jadx first (handles resources natively; XAPK is auto-extracted):
+- **APK, XAPK, APKM, APKS, AAB, DEX, or ZIP** → use jadx (it reads all of these natively; there is no separate extraction step, and the fernflower/vineflower engine refuses these formats):
 
   ```bash
   bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.sh <file>
   ```
 
-- **JAR/AAR** and Fernflower is available → prefer fernflower for better Java output:
+- **JAR/AAR/class** and Fernflower/Vineflower is available → prefer fernflower for better Java output:
 
   ```bash
   bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.sh --engine fernflower <file>
@@ -73,8 +73,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.
 
 After decompilation completes:
 
-1. Read `AndroidManifest.xml` from the resources directory. For XAPK, check the base APK's output first.
-2. If XAPK, review `xapk-manifest.json` in the output directory to understand the split structure.
+1. Read `AndroidManifest.xml` from the resources directory. As of 2.0.0, jadx merges an XAPK/split bundle's contents into this same single output tree — there is no longer a per-APK subdirectory to look in first. (If jadx's split-bundle detection fired, note in the console output that it re-decompiled `base.apk` into `<output>/base/` — that subdirectory is where the real app code and manifest are in that case.)
+2. Note: as of 2.0.0 the output directory no longer contains `xapk-manifest.json` and OBB files are no longer listed — jadx does not carry either over from an XAPK. If you need the XAPK's manifest.json or its OBB inventory, extract the original `.xapk` yourself (it is a ZIP).
 3. List the top-level package structure
 4. Identify the app's main Activity, Application class, and architecture pattern
 5. Report a summary to the user

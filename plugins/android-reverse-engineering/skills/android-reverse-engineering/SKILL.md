@@ -107,7 +107,7 @@ On Windows (PowerShell):
 
 For **XAPK/APKM/APKS/AAB/DEX/ZIP** files (split bundles used by APKPure and similar stores, Android App Bundles, and raw DEX/ZIP archives): jadx reads these formats natively as of 2.0.0. There is no longer a hand-rolled extraction step — the file is handed straight to jadx, which decompiles every contained APK/DEX into a single merged source tree under `<output>/sources/`.
 
-**Two capabilities from the old hand-rolled XAPK extraction are gone and are not replaced elsewhere**:
+**Three things changed with the old hand-rolled XAPK extraction gone, and none are replaced elsewhere**:
 - The XAPK's `manifest.json` is **not** copied into the output (it used to land at `<output>/xapk-manifest.json`). If you need it, extract the `.xapk` yourself (it is a ZIP) and read `manifest.json` directly.
 - OBB files are **not** enumerated or reported. If you need to know whether an XAPK ships OBB data, extract the `.xapk` yourself and look for `*.obb`.
 - The **output layout also changed**: previously each contained APK got its own subdirectory (`<output>/<apk-name>/`); now everything jadx extracts from the bundle merges into one `<output>/sources/` tree, the same layout a plain `.apk` has always produced.

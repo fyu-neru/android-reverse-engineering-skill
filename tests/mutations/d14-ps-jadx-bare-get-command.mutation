@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.ps1
+FIND:    $jadxCmd = Resolve-Tool -Id 'jadx'
+REPLACE:    $jadxCmd = if (Get-Command jadx -ErrorAction SilentlyContinue) { [pscustomobject]@{ Kind = 'cli'; Path = (Get-Command jadx).Source } } else { $null }
+EXPECT:D14: decompile.ps1 finds jadx via a tools.psv candidate path (USERPROFILE) when nothing is on PATH
