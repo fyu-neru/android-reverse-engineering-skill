@@ -47,7 +47,7 @@ if ($parseErrors -and $parseErrors.Count -gt 0) {
 exit 0
 EOF
 
-for f in "$SCRIPT_DIR"/*.ps1; do
+for f in "$SCRIPT_DIR"/*.ps1 "$SCRIPT_DIR"/lib/*.ps1; do
   [ -f "$f" ] || continue
   name=$(basename "$f")
   out=$("$PWSH_BIN" -NoProfile -NonInteractive -File "$parser_script" -Path "$f" 2>&1)

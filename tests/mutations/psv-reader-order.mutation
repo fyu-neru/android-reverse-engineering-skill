@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/tools.sh
+FIND:  env_name=$(tool_field "$id" env_override) || return 1
+REPLACE:  probe=$(tool_field "$id" probe) || return 1; if [ "$probe" != "-" ]; then local oldifs="$IFS" p; IFS=','; for p in $probe; do IFS="$oldifs"; if command -v "$p" >/dev/null 2>&1; then command -v "$p"; return 0; fi; IFS=','; done; IFS="$oldifs"; fi; env_name=$(tool_field "$id" env_override) || return 1
+EXPECT:resolution order: env override wins over PATH probe and candidates when set and file exists

@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/tools.sh
+FIND:  env_name=$(tool_field "$id" env_override) || return 1
+REPLACE:  env_name=$(tool_field "$id" env_override_typo) || return 1
+EXPECT:tools.sh and Tools.ps1 reference the exact same set of tool_field/Get-ToolField column names
