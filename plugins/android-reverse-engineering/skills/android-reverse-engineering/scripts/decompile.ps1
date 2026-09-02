@@ -132,8 +132,8 @@ function Find-FernflowerCommand {
         return [pscustomobject]@{ Kind = 'jar'; Path = $env:FERNFLOWER_JAR_PATH }
     }
     foreach ($name in @('vineflower', 'fernflower')) {
-        $cmd = Get-Command $name -ErrorAction SilentlyContinue
-        if ($cmd) {
+        $cmd = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue
+        if ($cmd -and $cmd.Source) {
             return [pscustomobject]@{ Kind = 'cli'; Path = $cmd.Source }
         }
     }
@@ -229,10 +229,11 @@ function Invoke-Fernflower {
     $ffArgs += $jarToDecompile
     $ffArgs += $OutDir
 
-    Write-Host "Running: $($ffCmd.Path) $($ffArgs -join ' ')"
     if ($ffCmd.Kind -eq 'cli') {
+        Write-Host "Running: $($ffCmd.Path) $($ffArgs -join ' ')"
         & $ffCmd.Path @ffArgs
     } else {
+        Write-Host "Running: java -jar $($ffCmd.Path) $($ffArgs -join ' ')"
         & java -jar $ffCmd.Path @ffArgs
     }
 

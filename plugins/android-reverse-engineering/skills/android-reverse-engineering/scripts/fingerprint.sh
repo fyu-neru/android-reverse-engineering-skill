@@ -30,7 +30,7 @@ INPUT="$1"
 [[ ! -f "$INPUT" ]] && { echo "File not found: $INPUT" >&2; exit 1; }
 
 TMP="$(mktemp -d -t apkfp.XXXXXX)"
-trap 'rm -rf "$TMP"' EXIT
+trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # Resolve to a list of APKs (handle XAPK = ZIP of APKs)
 APKS=()

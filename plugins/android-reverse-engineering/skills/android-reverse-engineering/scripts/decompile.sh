@@ -105,7 +105,7 @@ if [[ "$ext_lower" == "xapk" ]]; then
   # failure under set -e leaks the whole unpacked bundle, which can be
   # hundreds of MB for a large XAPK. The explicit rm -rf on the success
   # path is harmless — rm -rf on a missing path is a no-op.
-  trap 'if [[ -n "${XAPK_EXTRACTED_DIR:-}" ]] && [[ -d "$XAPK_EXTRACTED_DIR" ]]; then rm -rf "$XAPK_EXTRACTED_DIR"; fi' EXIT
+  trap 'if [[ -n "${XAPK_EXTRACTED_DIR:-}" ]] && [[ -d "$XAPK_EXTRACTED_DIR" ]]; then rm -rf "$XAPK_EXTRACTED_DIR"; fi' EXIT INT TERM
   echo "=== Extracting XAPK archive ==="
   unzip -qo "$INPUT_FILE_ABS" -d "$XAPK_EXTRACTED_DIR"
 
