@@ -124,10 +124,18 @@ if ($extLower -eq 'xapk') {
     Write-Host ""
 }
 
-# --- Locate fernflower JAR ---
-function Find-FernflowerJar {
+# --- Locate Fernflower/Vineflower ---
+# Mirrors the bash resolution order: env override, then a CLI on PATH,
+# then known install locations. Returns $null when nothing is found.
+function Find-FernflowerCommand {
     if ($env:FERNFLOWER_JAR_PATH -and (Test-Path $env:FERNFLOWER_JAR_PATH -ErrorAction SilentlyContinue)) {
-        return $env:FERNFLOWER_JAR_PATH
+        return [pscustomobject]@{ Kind = 'jar'; Path = $env:FERNFLOWER_JAR_PATH }
+    }
+    foreach ($name in @('vineflower', 'fernflower')) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($cmd) {
+            return [pscustomobject]@{ Kind = 'cli'; Path = $cmd.Source }
+        }
     }
     $candidates = @(
         "$env:USERPROFILE\.local\share\vineflower\vineflower.jar",
@@ -137,7 +145,9 @@ function Find-FernflowerJar {
         "$env:USERPROFILE\vineflower\vineflower.jar"
     )
     foreach ($c in $candidates) {
-        if (Test-Path $c -ErrorAction SilentlyContinue) { return $c }
+        if (Test-Path $c -ErrorAction SilentlyContinue) {
+            return [pscustomobject]@{ Kind = 'jar'; Path = $c }
+        }
     }
     return $null
 }
@@ -182,9 +192,9 @@ function Invoke-Jadx {
 function Invoke-Fernflower {
     param([string]$OutDir, [string]$FileAbs, [string]$FileExt)
 
-    $ffJar = Find-FernflowerJar
-    if (-not $ffJar) {
-        Write-Host "Error: Fernflower/Vineflower JAR not found." -ForegroundColor Red
+    $ffCmd = Find-FernflowerCommand
+    if (-not $ffCmd) {
+        Write-Host "Error: Fernflower/Vineflower not found." -ForegroundColor Red
         Write-Host "Set FERNFLOWER_JAR_PATH or see references/setup-guide.md"
         return $false
     }
@@ -219,8 +229,12 @@ function Invoke-Fernflower {
     $ffArgs += $jarToDecompile
     $ffArgs += $OutDir
 
-    Write-Host "Running: java -jar $ffJar $($ffArgs -join ' ')"
-    & java -jar $ffJar @ffArgs
+    Write-Host "Running: $($ffCmd.Path) $($ffArgs -join ' ')"
+    if ($ffCmd.Kind -eq 'cli') {
+        & $ffCmd.Path @ffArgs
+    } else {
+        & java -jar $ffCmd.Path @ffArgs
+    }
 
     # Fernflower outputs a JAR containing .java files — extract it
     $resultJar = Join-Path $OutDir ([IO.Path]::GetFileName($jarToDecompile))

@@ -129,23 +129,44 @@ if [[ "$ext_lower" == "xapk" ]]; then
   echo
 fi
 
-# --- Locate fernflower JAR ---
-find_fernflower_jar() {
+# --- Locate Fernflower/Vineflower ---
+# Fills VF_ARGV with the command that runs the decompiler, mirroring the
+# resolution order check-deps.sh uses: env override, then a CLI on PATH,
+# then known install locations. Returns 1 when nothing is found.
+#
+# An argv array rather than a command string: paths routinely contain
+# spaces (/Users/My Name/..., C:\Program Files\...) and a joined string
+# cannot be expanded safely.
+VF_ARGV=()
+vineflower_argv() {
+  VF_ARGV=()
+
   if [[ -n "${FERNFLOWER_JAR_PATH:-}" ]] && [[ -f "$FERNFLOWER_JAR_PATH" ]]; then
-    echo "$FERNFLOWER_JAR_PATH"
-    return
+    VF_ARGV=(java -jar "$FERNFLOWER_JAR_PATH")
+    return 0
   fi
-  # Check common locations
+
+  local cli
+  for cli in vineflower fernflower; do
+    if command -v "$cli" &>/dev/null; then
+      VF_ARGV=("$cli")
+      return 0
+    fi
+  done
+
+  local candidate
   for candidate in \
+    "$HOME/.local/share/vineflower/vineflower.jar" \
     "$HOME/fernflower/build/libs/fernflower.jar" \
     "$HOME/vineflower/build/libs/vineflower.jar" \
     "$HOME/fernflower/fernflower.jar" \
     "$HOME/vineflower/vineflower.jar"; do
     if [[ -f "$candidate" ]]; then
-      echo "$candidate"
-      return
+      VF_ARGV=(java -jar "$candidate")
+      return 0
     fi
   done
+
   return 1
 }
 
@@ -215,8 +236,7 @@ run_fernflower() {
   local count=0
   local ff_timeout_seconds="${FERNFLOWER_TIMEOUT_SECONDS:-900}"
 
-  local ff_jar
-  if ! ff_jar=$(find_fernflower_jar); then
+  if ! vineflower_argv; then
     echo "Error: Fernflower/Vineflower JAR not found." >&2
     echo "Set FERNFLOWER_JAR_PATH or see references/setup-guide.md" >&2
     return 1
@@ -263,15 +283,15 @@ run_fernflower() {
   ff_args+=("$jar_to_decompile")
   ff_args+=("$out_dir")
 
-  echo "Running: java -jar $ff_jar ${ff_args[*]}"
+  echo "Running: ${VF_ARGV[*]} ${ff_args[*]}"
   if command -v timeout &>/dev/null && [[ "$ff_timeout_seconds" =~ ^[0-9]+$ ]] && (( ff_timeout_seconds > 0 )); then
     echo "Fernflower timeout: ${ff_timeout_seconds}s (override with FERNFLOWER_TIMEOUT_SECONDS)"
-    if timeout "${ff_timeout_seconds}s" java -jar "$ff_jar" "${ff_args[@]}"; then
+    if timeout "${ff_timeout_seconds}s" "${VF_ARGV[@]}" "${ff_args[@]}"; then
       ff_status=0
     else
       ff_status=$?
     fi
-  elif java -jar "$ff_jar" "${ff_args[@]}"; then
+  elif "${VF_ARGV[@]}" "${ff_args[@]}"; then
     ff_status=0
   else
     ff_status=$?
