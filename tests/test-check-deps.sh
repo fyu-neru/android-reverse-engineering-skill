@@ -84,5 +84,20 @@ out5=$(PATH="$bin5:$PATH" "${BASH:-bash}" "$SCRIPT" 2>&1)
 assert_contains "$out5" "[OK] Java 17 detected" \
   "SIGPIPE regression: check-deps.sh must not abort when java keeps writing after the version line (head -1 | SIGPIPE race)"
 
+# --- Task 3: check-deps.sh must resolve adb via lib/tools.sh's tool_resolve
+#     (env override -> PATH probe -> candidates), not a re-implemented,
+#     PATH-only `command -v adb` check. A hardcoded PATH-only check cannot
+#     see ADB_BIN at all, so this is only satisfiable by actually consuming
+#     the reader — exactly the regression psv-check-deps-reader-link.mutation
+#     reintroduces. ---
+emptybin6=$(new_tmpdir)
+home6=$(new_tmpdir)
+adb_target="$home6/custom-adb"
+touch "$adb_target"
+
+out6=$(HOME="$home6" PATH="$emptybin6:$PATH" ADB_BIN="$adb_target" "${BASH:-bash}" "$SCRIPT" 2>&1)
+assert_contains "$out6" "[OK] adb detected (optional)" \
+  "[all] Task 3: check-deps.sh resolves adb via the ADB_BIN env override with no adb on PATH (proves it consumes tools.sh's tool_resolve rather than a hardcoded PATH-only check)"
+
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"

@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/check-deps.sh
+FIND:      if tool_resolve adb >/dev/null; then
+REPLACE:      if command -v adb &>/dev/null; then
+EXPECT:Task 3: check-deps.sh resolves adb via the ADB_BIN env override
