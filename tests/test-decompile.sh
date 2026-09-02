@@ -71,5 +71,20 @@ assert_contains "$out2" "VINEFLOWER_CLI_ARGV" \
 assert_not_contains "$out2" "JAVA_SHOULD_NOT_RUN" \
   "D2: decompile does not fall back to java -jar when a CLI is present"
 
+# --- D3: the XAPK temp dir must be removed even when decompilation fails ---
+# The trap must fire on any failure path, including unzip failure before APKs are found.
+# Create a dummy invalid XAPK (no archiver dependency, works on all platforms).
+work3=$(new_tmpdir)
+echo "not a zip" > "$work3/bundle.xapk"
+
+before=$(ls -d "${TMPDIR:-/tmp}"/xapk-extract-* 2>/dev/null | wc -l | tr -d ' ')
+output=$(cd "$work3" && bash "$SCRIPT" bundle.xapk 2>&1) || true
+after=$(ls -d "${TMPDIR:-/tmp}"/xapk-extract-* 2>/dev/null | wc -l | tr -d ' ')
+
+assert_contains "$output" "=== Extracting XAPK archive ===" \
+  "D3: decompile reaches XAPK extraction (code path exercised)"
+assert_equals "$after" "$before" \
+  "D3: no xapk-extract-* temp dir is left behind on unzip failure"
+
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
