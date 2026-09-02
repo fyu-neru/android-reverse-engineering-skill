@@ -14,10 +14,18 @@ for t in "$TESTS_DIR"/test-*.sh; do
   output=$(bash "$t" 2>&1)
   echo "$output" | grep -v '^SUMMARY '
   summary=$(echo "$output" | grep '^SUMMARY ' | tail -1)
-  run=$(echo "$summary" | awk '{print $2}')
-  failed=$(echo "$summary" | awk '{print $3}')
-  [ -n "$run" ] || run=0
-  [ -n "$failed" ] || failed=1
+  if [ -z "$summary" ]; then
+    echo "  ERROR - $(basename "$t") produced no 'SUMMARY <run> <failed>' line."
+    echo "          Every test file must print that as its final stdout line;"
+    echo "          without it the runner cannot tell passes from crashes."
+    run=0
+    failed=1
+  else
+    run=$(echo "$summary" | awk '{print $2}')
+    failed=$(echo "$summary" | awk '{print $3}')
+    [ -n "$run" ] || run=0
+    [ -n "$failed" ] || failed=1
+  fi
   total_run=$((total_run + run))
   total_failed=$((total_failed + failed))
   if [ "$failed" -ne 0 ]; then
