@@ -7,3 +7,6 @@
 # Markdown and JSON — always LF
 *.md text eol=lf
 *.json text eol=lf
+
+# Test harness — always LF
+tests/**/*.sh text eol=lf
