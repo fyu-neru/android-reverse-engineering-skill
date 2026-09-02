@@ -76,10 +76,21 @@ section() {
   echo
 }
 
+# run_grep [grep-option ...] <pattern>
+# Leading options (e.g. -i) are collected and forwarded to grep. Passing
+# them positionally used to overwrite the pattern, which silently disabled
+# every --auth search.
 run_grep() {
+  local extra=()
+  while [[ $# -gt 1 && "$1" == -* ]]; do
+    extra[${#extra[@]}]="$1"
+    shift
+  done
   local pattern="$1"
+  # bash 3.2 errors on "${extra[@]}" when the array is empty under set -u,
+  # so guard the expansion.
   # shellcheck disable=SC2086
-  grep $GREP_OPTS -E "$pattern" "$SOURCE_DIR" 2>/dev/null || true
+  grep $GREP_OPTS ${extra[@]+"${extra[@]}"} -E "$pattern" "$SOURCE_DIR" 2>/dev/null || true
 }
 
 # Print a one-screen summary FIRST so a reader knows what to expect from
