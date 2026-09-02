@@ -1,5 +1,5 @@
 FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/find-api-calls.sh
 FIND:  grep $GREP_OPTS ${extra[@]+"${extra[@]}"} -E "$pattern" "$SOURCE_DIR" 2>/dev/null || true
 REPLACE:  grep $GREP_OPTS "${extra[@]}" -E "$pattern" "$SOURCE_DIR" 2>/dev/null || true
-EXPECT:D1: --auth finds a plaintext api_key in the sources
+EXPECT:D1: --auth finds
 REQUIRES:bash<4.4
