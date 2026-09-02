@@ -1,0 +1,17 @@
+name: sigpipe-diag
+on: workflow_dispatch
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: check sigpipe disposition
+        shell: bash
+        run: |
+          echo "=== trap -p ==="
+          trap -p
+          echo "=== yes | head -1 (should be instant if SIGPIPE works) ==="
+          start=$(date +%s)
+          timeout 5 bash -c 'yes | head -1'
+          rc=$?
+          end=$(date +%s)
+          echo "exit=$rc elapsed=$((end-start))s"
