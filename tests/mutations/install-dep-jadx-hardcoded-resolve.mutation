@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/install-dep.sh
+FIND:  if resolved=$(tool_resolve jadx); then
+REPLACE:  if command -v jadx &>/dev/null; then
+EXPECT:own version (9.9.9), not a real jadx that may happen to be on this machine's PATH

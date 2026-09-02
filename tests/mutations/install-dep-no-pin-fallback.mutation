@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/install-dep.sh
+FIND:  if [[ -n "$tag" ]]; then
+REPLACE:  if true; then
+EXPECT:install-dep.sh jadx falls back to tools.psv's pinned version when the GitHub API is unreachable

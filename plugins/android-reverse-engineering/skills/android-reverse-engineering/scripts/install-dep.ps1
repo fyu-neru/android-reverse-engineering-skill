@@ -1,17 +1,29 @@
 # install-dep.ps1 — Install a single dependency for Android reverse engineering
 # Usage: install-dep.ps1 <dependency>
-# Dependencies: java, jadx, vineflower, dex2jar, apktool, adb
+# Dependencies: java, jadx, vineflower, adb
+#
+# jadx and vineflower resolve their candidate paths, GitHub repo, release
+# asset filename and pinned fallback version from lib/tools.psv (via
+# lib/Tools.ps1) rather than hardcoding them here — see lib/Tools.ps1's
+# header comment. dex2jar and apktool are no longer installable by this
+# script (2.0.0): jadx handles APK/DEX/XAPK/APKM natively, so both are now
+# manual-fallback tools documented in references/setup-guide.md instead of
+# dependencies with an install path.
 #
 # Exit codes:
 #   0 — installed successfully
-#   1 — installation failed
-#   2 — requires manual action
+#   1 — installation failed (including a digest mismatch on a downloaded
+#       release asset — refused, not installed)
+#   2 — requires manual action (or the GitHub API and its release assets
+#       are both unreachable)
 param(
     [Parameter(Position=0)]
     [string]$Dep
 )
 
 $ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'lib/Tools.ps1')
 
 function Show-Usage {
     Write-Host @"
@@ -23,8 +35,6 @@ Available dependencies:
   java         Java JDK 17+
   jadx         jadx decompiler
   vineflower   Vineflower (Fernflower fork) decompiler
-  dex2jar      DEX to JAR converter
-  apktool      Android resource decoder
   adb          Android Debug Bridge
 
 The script detects available package managers (winget, scoop, choco), then:
@@ -65,8 +75,67 @@ function Get-GHLatestTag {
     param([string]$Repo)
     $url = "https://api.github.com/repos/$Repo/releases/latest"
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $response = Invoke-RestMethod -Uri $url -UseBasicParsing
+    try {
+        $response = Invoke-RestMethod -Uri $url -UseBasicParsing
+    } catch {
+        return $null
+    }
     return $response.tag_name
+}
+
+# --- Helper: download a tools.psv-listed tool's GitHub release asset ---
+# Get-GHReleaseDownload -Id <id> -Suffix <suffix>
+# Resolves GhRepo/Asset/Pin for <id> from tools.psv, tries the live latest
+# tag first, and falls back to the pinned version when the GitHub API is
+# unreachable or rate-limited (Get-GHLatestTag returns $null). Downloads
+# the resolved asset into a fresh temp file and returns a
+# [pscustomobject]@{ Path; Version } — mirrors tools.sh's gh_release_download.
+function Get-GHReleaseDownload {
+    param(
+        [Parameter(Mandatory = $true)][string]$Id,
+        [Parameter(Mandatory = $true)][string]$Suffix
+    )
+    $repo = Get-ToolField -Id $Id -Column 'gh_repo'
+    $assetTmpl = Get-ToolField -Id $Id -Column 'asset'
+    $pin = Get-ToolField -Id $Id -Column 'pin'
+
+    $tag = Get-GHLatestTag $repo
+    $tmp = Join-Path $env:TEMP "$Id-$([guid]::NewGuid().ToString('N'))$Suffix"
+
+    if ($tag) {
+        $version = $tag -replace '^v', ''
+        $assetName = $assetTmpl -replace '\{VERSION\}', $version
+        $url = "https://github.com/$repo/releases/download/$tag/$assetName"
+        try {
+            Invoke-Download -Url $url -Dest $tmp
+        } catch {
+            return $null
+        }
+    } else {
+        Write-Info "Could not reach the GitHub API for $repo (unreachable or rate-limited); falling back to the pinned version $pin."
+        $version = $pin
+        $assetName = $assetTmpl -replace '\{VERSION\}', $version
+        # The pinned version's tag prefix isn't recorded in tools.psv (jadx
+        # tags "v1.5.6", Vineflower tags "1.12.0" — real per-project data,
+        # not an installation strategy): try both conventions, the same
+        # way dex2jar's pre-existing alternate-naming retry already did.
+        $downloaded = $false
+        foreach ($t in @("v$version", $version)) {
+            $url = "https://github.com/$repo/releases/download/$t/$assetName"
+            try {
+                Invoke-Download -Url $url -Dest $tmp
+                $downloaded = $true
+                break
+            } catch {
+                continue
+            }
+        }
+        if (-not $downloaded) {
+            return $null
+        }
+    }
+
+    return [pscustomobject]@{ Path = $tmp; Version = $version }
 }
 
 # --- Helper: ensure directory on PATH ---
@@ -127,8 +196,9 @@ function Install-Java {
 }
 
 function Install-Jadx {
-    if (Get-Command jadx -ErrorAction SilentlyContinue) {
-        Write-Ok "jadx already installed"
+    $resolved = Resolve-Tool -Id 'jadx'
+    if ($resolved) {
+        Write-Ok "jadx already installed: $($resolved.Path)"
         return
     }
 
@@ -142,19 +212,17 @@ function Install-Jadx {
         }
     }
 
-    # Direct download from GitHub releases
+    # Direct download from GitHub releases. Candidate paths, gh_repo,
+    # asset filename template and the pinned fallback version all come
+    # from tools.psv, not hardcoded here.
     Write-Info "Installing jadx from GitHub releases..."
-    $tag = Get-GHLatestTag "skylot/jadx"
-    if (-not $tag) {
-        Write-Fail "Could not determine latest jadx version."
-        Write-Manual "Download from https://github.com/skylot/jadx/releases/latest"
+    $dl = Get-GHReleaseDownload -Id 'jadx' -Suffix '.zip'
+    if (-not $dl) {
+        Write-Fail "Could not download jadx."
+        Write-Manual "Download from https://github.com/$(Get-ToolField -Id 'jadx' -Column 'gh_repo')/releases/latest"
     }
-
-    $version = $tag -replace '^v', ''
-    $url = "https://github.com/skylot/jadx/releases/download/$tag/jadx-$version.zip"
-    $tmpZip = Join-Path $env:TEMP "jadx-$version.zip"
-
-    Invoke-Download -Url $url -Dest $tmpZip
+    $version = $dl.Version
+    $tmpZip = $dl.Path
 
     $installDir = Join-Path $localShare 'jadx'
     if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
@@ -175,41 +243,28 @@ function Install-Jadx {
 }
 
 function Install-Vineflower {
-    if (Get-Command vineflower -ErrorAction SilentlyContinue) {
-        Write-Ok "Vineflower CLI already installed"
+    # Candidate paths, the probe list (vineflower, fernflower) and the
+    # FERNFLOWER_JAR_PATH env override all come from tools.psv via
+    # Resolve-Tool, not a separately-maintained candidate list.
+    $resolved = Resolve-Tool -Id 'vineflower'
+    if ($resolved) {
+        Write-Ok "Vineflower/Fernflower already available: $($resolved.Path)"
         return
-    }
-    if (Get-Command fernflower -ErrorAction SilentlyContinue) {
-        Write-Ok "Fernflower CLI already installed"
-        return
-    }
-    $ffCandidates = @(
-        $env:FERNFLOWER_JAR_PATH,
-        "$env:USERPROFILE\.local\share\vineflower\vineflower.jar",
-        "$env:USERPROFILE\vineflower\vineflower.jar",
-        "$env:USERPROFILE\fernflower\fernflower.jar"
-    )
-    foreach ($c in $ffCandidates) {
-        if ($c -and (Test-Path $c -ErrorAction SilentlyContinue)) {
-            Write-Ok "Vineflower/Fernflower JAR already exists: $c"
-            return
-        }
     }
 
-    # Download JAR from GitHub releases
+    # Download JAR from GitHub releases. gh_repo, asset filename template
+    # and the pinned fallback version all come from tools.psv, not
+    # hardcoded here.
     Write-Info "Installing Vineflower from GitHub releases..."
-    $tag = Get-GHLatestTag "Vineflower/vineflower"
-    if (-not $tag) {
-        Write-Fail "Could not determine latest Vineflower version."
-        Write-Manual "Download from https://github.com/Vineflower/vineflower/releases/latest"
+    $dl = Get-GHReleaseDownload -Id 'vineflower' -Suffix '.jar'
+    if (-not $dl) {
+        Write-Fail "Could not download Vineflower."
+        Write-Manual "Download from https://github.com/$(Get-ToolField -Id 'vineflower' -Column 'gh_repo')/releases/latest"
     }
-
-    $version = $tag -replace '^v', ''
-    $url = "https://github.com/Vineflower/vineflower/releases/download/$tag/vineflower-$version.jar"
+    $version = $dl.Version
     $installDir = Join-Path $localShare 'vineflower'
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-
-    Invoke-Download -Url $url -Dest (Join-Path $installDir 'vineflower.jar')
+    Move-Item -Path $dl.Path -Destination (Join-Path $installDir 'vineflower.jar') -Force
 
     # Create wrapper batch file
     New-Item -ItemType Directory -Path $localBin -Force | Out-Null
@@ -222,80 +277,6 @@ function Install-Vineflower {
 
     Write-Ok "Vineflower $version installed to $installDir\vineflower.jar"
     Write-Info "FERNFLOWER_JAR_PATH set to $installDir\vineflower.jar"
-}
-
-function Install-Dex2Jar {
-    if ((Get-Command d2j-dex2jar -ErrorAction SilentlyContinue) -or
-        (Get-Command d2j-dex2jar.bat -ErrorAction SilentlyContinue)) {
-        Write-Ok "dex2jar already installed"
-        return
-    }
-
-    Write-Info "Installing dex2jar from GitHub releases..."
-    $tag = try { Get-GHLatestTag "ThexXTURBOXx/dex2jar" } catch { "2.4.35" }
-    if (-not $tag) { $tag = "2.4.35" }
-
-    $version = $tag -replace '^v', ''
-    $url = "https://github.com/ThexXTURBOXx/dex2jar/releases/download/$tag/dex-tools-$version.zip"
-    $tmpZip = Join-Path $env:TEMP "dex2jar-$version.zip"
-
-    try {
-        Invoke-Download -Url $url -Dest $tmpZip
-    } catch {
-        # Try alternate naming (pre-2.4.30 releases)
-        $url = "https://github.com/ThexXTURBOXx/dex2jar/releases/download/$tag/dex-tools-v$version.zip"
-        try {
-            Invoke-Download -Url $url -Dest $tmpZip
-        } catch {
-            Write-Fail "Download failed."
-            Write-Manual "Download from https://github.com/ThexXTURBOXx/dex2jar/releases/latest"
-        }
-    }
-
-    $installDir = Join-Path $localShare 'dex2jar'
-    if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
-    New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-    Expand-Archive -Path $tmpZip -DestinationPath $installDir -Force
-    Remove-Item $tmpZip -Force
-
-    # Find the actual bin directory (may be nested)
-    $d2jBat = Get-ChildItem -Path $installDir -Recurse -Filter 'd2j-dex2jar.bat' | Select-Object -First 1
-    if (-not $d2jBat) {
-        $d2jBat = Get-ChildItem -Path $installDir -Recurse -Filter 'd2j-dex2jar.sh' | Select-Object -First 1
-    }
-    if (-not $d2jBat) {
-        Write-Fail "Could not find d2j-dex2jar in extracted archive."
-        Write-Manual "Download and extract manually from https://github.com/ThexXTURBOXx/dex2jar/releases"
-    }
-
-    $binDir = $d2jBat.DirectoryName
-    Add-ToUserPath $binDir
-
-    Write-Ok "dex2jar $version installed to $installDir"
-}
-
-function Install-Apktool {
-    if (Get-Command apktool -ErrorAction SilentlyContinue) {
-        Write-Ok "apktool already installed"
-        return
-    }
-
-    if ($hasScoop) {
-        Write-Info "Installing apktool via scoop..."
-        scoop install apktool
-    } elseif ($hasChoco) {
-        Write-Info "Installing apktool via choco..."
-        choco install apktool -y
-    } else {
-        Write-Manual "Install apktool from https://apktool.org/docs/install"
-    }
-
-    if (Get-Command apktool -ErrorAction SilentlyContinue) {
-        Write-Ok "apktool installed"
-    } else {
-        Write-Fail "apktool installation may have failed."
-        exit 1
-    }
 }
 
 function Install-Adb {
@@ -334,12 +315,10 @@ switch ($Dep) {
     'jadx'        { Install-Jadx }
     'vineflower'  { Install-Vineflower }
     'fernflower'  { Install-Vineflower }
-    'dex2jar'     { Install-Dex2Jar }
-    'apktool'     { Install-Apktool }
     'adb'         { Install-Adb }
     default {
         Write-Host "Error: Unknown dependency '$Dep'" -ForegroundColor Red
-        Write-Host "Available: java, jadx, vineflower, dex2jar, apktool, adb"
+        Write-Host "Available: java, jadx, vineflower, adb"
         exit 1
     }
 }

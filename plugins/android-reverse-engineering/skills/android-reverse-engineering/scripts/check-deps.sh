@@ -8,9 +8,9 @@
 # comes from lib/tools.sh's tool_list, tool_resolve and tool_field, not a
 # second, independently-maintained candidate-path list — see lib/tools.sh's
 # header comment for the drift that duplication used to cause. dex2jar and
-# apktool are not yet in tools.psv (they are dropped from the plugin
-# entirely in a later 2.0.0 task) and keep their original hardcoded checks,
-# unchanged, in their original output position.
+# apktool are no longer dependencies of this plugin (2.0.0): jadx handles
+# APK/DEX/XAPK/APKM natively, so both are documented as manual fallbacks in
+# references/setup-guide.md instead of being checked or installed here.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -119,27 +119,6 @@ for _dep_id in $(tool_list optional); do
       else
         echo "[MISSING] Fernflower/Vineflower not found (optional — $ff_purpose)"
         missing_optional+=("vineflower")
-      fi
-
-      # --- dex2jar ---
-      # Not yet in tools.psv (dropped from the plugin entirely in a later
-      # 2.0.0 task); kept hardcoded here, in its original output position
-      # between vineflower and apktool.
-      if command -v d2j-dex2jar &>/dev/null || command -v d2j-dex2jar.sh &>/dev/null; then
-        echo "[OK] dex2jar detected"
-      else
-        echo "[MISSING] dex2jar not found (optional — needed to use Fernflower on APK/DEX files)"
-        missing_optional+=("dex2jar")
-      fi
-
-      # --- Optional: apktool ---
-      # Not yet in tools.psv (dropped from the plugin entirely in a later
-      # 2.0.0 task); kept hardcoded here, in its original output position.
-      if command -v apktool &>/dev/null; then
-        echo "[OK] apktool detected (optional)"
-      else
-        echo "[MISSING] apktool not found (optional — useful for resource decoding)"
-        missing_optional+=("apktool")
       fi
       ;;
     adb)

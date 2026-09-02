@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/install-dep.sh
+FIND:  repo=$(tool_field "$id" gh_repo) || return 1
+REPLACE:  repo="skylot/jadx"
+EXPECT:downloads the gh_repo/asset from tools.psv (fixture repo acme/jadx-fake), not a hardcoded skylot/jadx

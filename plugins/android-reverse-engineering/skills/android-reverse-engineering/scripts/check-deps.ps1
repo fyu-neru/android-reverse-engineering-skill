@@ -5,9 +5,9 @@
 # paths) for the tools listed in lib/tools.psv (java, jadx, vineflower, adb)
 # comes from lib/Tools.ps1's Get-ToolList/Resolve-Tool/Get-ToolField rather
 # than a second, independently-maintained candidate-path list. dex2jar and
-# apktool are not yet in tools.psv (they are dropped from the plugin
-# entirely in a later 2.0.0 task) and keep their original hardcoded checks,
-# unchanged, in their original output position.
+# apktool are no longer dependencies of this plugin (2.0.0): jadx handles
+# APK/DEX/XAPK/APKM natively, so both are documented as manual fallbacks in
+# references/setup-guide.md instead of being checked or installed here.
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'lib/Tools.ps1')
@@ -131,32 +131,6 @@ foreach ($depId in (Get-ToolList -Want 'optional')) {
             } else {
                 Write-Host "[MISSING] Fernflower/Vineflower not found (optional - $ffPurpose)"
                 $missingOptional += "vineflower"
-            }
-
-            # --- dex2jar ---
-            # Not yet in tools.psv (dropped from the plugin entirely in a
-            # later 2.0.0 task); kept hardcoded here, in its original
-            # output position between vineflower and apktool.
-            $d2jBin = Get-Command d2j-dex2jar -ErrorAction SilentlyContinue
-            if (-not $d2jBin) {
-                $d2jBin = Get-Command d2j-dex2jar.bat -ErrorAction SilentlyContinue
-            }
-            if ($d2jBin) {
-                Write-Host "[OK] dex2jar detected"
-            } else {
-                Write-Host "[MISSING] dex2jar not found (optional - needed to use Fernflower on APK/DEX files)"
-                $missingOptional += "dex2jar"
-            }
-
-            # --- Optional: apktool ---
-            # Not yet in tools.psv (dropped from the plugin entirely in a
-            # later 2.0.0 task); kept hardcoded here, in its original
-            # output position.
-            if (Get-Command apktool -ErrorAction SilentlyContinue) {
-                Write-Host "[OK] apktool detected (optional)"
-            } else {
-                Write-Host "[MISSING] apktool not found (optional - useful for resource decoding)"
-                $missingOptional += "apktool"
             }
         }
         'adb' {

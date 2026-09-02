@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/install-dep.sh
+FIND:    for t in "v$version" "$version"; do
+REPLACE:    for t in "v$version"; do
+EXPECT:retries the bare version when the v-prefixed tag 404s

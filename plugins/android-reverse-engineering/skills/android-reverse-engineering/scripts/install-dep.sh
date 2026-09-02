@@ -1,13 +1,27 @@
 #!/usr/bin/env bash
 # install-dep.sh — Install a single dependency for Android reverse engineering
 # Usage: install-dep.sh <dependency>
-# Dependencies: java, jadx, vineflower, dex2jar, apktool, adb
+# Dependencies: java, jadx, vineflower, adb
+#
+# jadx and vineflower resolve their candidate paths, GitHub repo, release
+# asset filename and pinned fallback version from lib/tools.psv (via
+# lib/tools.sh) rather than hardcoding them here — see lib/tools.sh's
+# header comment. dex2jar and apktool are no longer installable by this
+# script (2.0.0): jadx handles APK/DEX/XAPK/APKM natively, so both are now
+# manual-fallback tools documented in references/setup-guide.md instead of
+# dependencies with an install path.
 #
 # Exit codes:
 #   0 — installed successfully
-#   1 — installation failed
-#   2 — requires manual action (e.g. sudo needed but not available)
+#   1 — installation failed (including a digest mismatch on a downloaded
+#       release asset — refused, not installed)
+#   2 — requires manual action (e.g. sudo needed but not available, or the
+#       GitHub API and its release assets are both unreachable)
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/tools.sh
+. "$SCRIPT_DIR/lib/tools.sh"
 
 usage() {
   cat <<EOF
@@ -19,8 +33,6 @@ Available dependencies:
   java         Java JDK 17+
   jadx         jadx decompiler
   vineflower   Vineflower (Fernflower fork) decompiler
-  dex2jar      DEX to JAR converter
-  apktool      Android resource decoder
   adb          Android Debug Bridge
 
 The script detects your OS and package manager, then:
@@ -135,11 +147,74 @@ gh_latest_tag() {
   local url="https://api.github.com/repos/$repo/releases/latest"
   local body=""
   if command -v curl &>/dev/null; then
-    body=$(curl -fsSL "$url")
+    body=$(curl -fsSL "$url" 2>/dev/null) || body=""
   elif command -v wget &>/dev/null; then
-    body=$(wget -q -O - "$url")
+    body=$(wget -q -O - "$url" 2>/dev/null) || body=""
   fi
   sed -n '/"tag_name"/{s/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p;q;}' <<<"$body"
+}
+
+# --- Helper: download a tools.psv-listed tool's GitHub release asset ---
+# gh_release_download <id> <suffix>
+# Resolves gh_repo/asset/pin for <id> from tools.psv, tries the live latest
+# tag first, and falls back to the pinned version when the GitHub API is
+# unreachable or rate-limited (gh_latest_tag returns empty). Downloads the
+# resolved asset into a fresh temp file (named with <suffix>, e.g. ".zip")
+# and, on success, leaves that file's path in GH_DL_FILE and the resolved
+# version in GH_DL_VERSION — bash 3.2 has no namerefs, and this function
+# must NOT be called via command substitution ($(...)), which would fork
+# a subshell and silently discard both globals before the caller could
+# read them. Call it directly and check its exit status instead.
+GH_DL_FILE=""
+GH_DL_VERSION=""
+gh_release_download() {
+  local id="$1" suffix="$2"
+  local repo asset_tmpl pin tag version asset_name url tmp t
+  GH_DL_FILE=""
+  GH_DL_VERSION=""
+  repo=$(tool_field "$id" gh_repo) || return 1
+  asset_tmpl=$(tool_field "$id" asset) || return 1
+  pin=$(tool_field "$id" pin) || return 1
+
+  tag=$(gh_latest_tag "$repo")
+  tmp=$(mktemp "/tmp/${id}-XXXXXX${suffix}")
+
+  if [[ -n "$tag" ]]; then
+    version="${tag#v}"
+    asset_name="${asset_tmpl//\{VERSION\}/$version}"
+    info "Downloading $id $version..."
+    url="https://github.com/$repo/releases/download/${tag}/${asset_name}"
+    if ! download "$url" "$tmp"; then
+      rm -f "$tmp"
+      return 1
+    fi
+  else
+    info "Could not reach the GitHub API for $repo (unreachable or rate-limited); falling back to the pinned version $pin."
+    version="$pin"
+    asset_name="${asset_tmpl//\{VERSION\}/$version}"
+    info "Downloading $id $version..."
+    # The pinned version's tag prefix isn't recorded in tools.psv (jadx
+    # tags "v1.5.6", Vineflower tags "1.12.0" — real per-project data, not
+    # an installation strategy, and not worth a column for two data
+    # points used nowhere else): try both conventions, the same way
+    # dex2jar's pre-existing alternate-naming retry already did.
+    tag=""
+    for t in "v$version" "$version"; do
+      url="https://github.com/$repo/releases/download/${t}/${asset_name}"
+      if download "$url" "$tmp" 2>/dev/null; then
+        tag="$t"
+        break
+      fi
+    done
+    if [[ -z "$tag" ]]; then
+      rm -f "$tmp"
+      return 1
+    fi
+  fi
+
+  GH_DL_FILE="$tmp"
+  GH_DL_VERSION="$version"
+  return 0
 }
 
 # --- Helper: add a line to shell profile if not already present ---
@@ -206,8 +281,9 @@ install_java() {
 }
 
 install_jadx() {
-  if command -v jadx &>/dev/null; then
-    ok "jadx already installed: $(jadx --version 2>/dev/null || echo 'unknown')"
+  local resolved
+  if resolved=$(tool_resolve jadx); then
+    ok "jadx already installed: $("$resolved" --version 2>/dev/null || echo 'unknown')"
     return 0
   fi
 
@@ -219,22 +295,16 @@ install_jadx() {
     return 0
   fi
 
-  # User-local install from GitHub releases (no sudo needed)
+  # User-local install from GitHub releases (no sudo needed). Candidate
+  # paths, gh_repo, asset filename template and the pinned fallback
+  # version all come from tools.psv, not hardcoded here.
   info "Installing jadx from GitHub releases..."
-  local tag
-  tag=$(gh_latest_tag "skylot/jadx")
-  if [[ -z "$tag" ]]; then
-    fail "Could not determine latest jadx version."
-    manual "Download from https://github.com/skylot/jadx/releases/latest"
+  if ! gh_release_download jadx ".zip"; then
+    fail "Could not download jadx."
+    manual "Download from https://github.com/$(tool_field jadx gh_repo)/releases/latest"
   fi
-
-  local version="${tag#v}"
-  local url="https://github.com/skylot/jadx/releases/download/${tag}/jadx-${version}.zip"
-  local tmp_zip
-  tmp_zip=$(mktemp /tmp/jadx-XXXXXX.zip)
-
-  info "Downloading jadx $version..."
-  download "$url" "$tmp_zip"
+  local tmp_zip="$GH_DL_FILE"
+  local version="$GH_DL_VERSION"
 
   local install_dir="$HOME/.local/share/jadx"
   rm -rf "$install_dir"
@@ -259,22 +329,14 @@ install_jadx() {
 }
 
 install_vineflower() {
-  # Check if already available
-  if command -v vineflower &>/dev/null || command -v fernflower &>/dev/null; then
-    ok "Vineflower/Fernflower CLI already installed"
+  # Check if already available. Candidate paths, the probe list (vineflower,
+  # fernflower) and the FERNFLOWER_JAR_PATH env override all come from
+  # tools.psv via tool_resolve, not a separately-maintained candidate list.
+  local resolved
+  if resolved=$(tool_resolve vineflower); then
+    ok "Vineflower/Fernflower already available: $resolved"
     return 0
   fi
-  for candidate in \
-    "${FERNFLOWER_JAR_PATH:-}" \
-    "$HOME/vineflower/vineflower.jar" \
-    "$HOME/fernflower/fernflower.jar" \
-    "$HOME/fernflower/build/libs/fernflower.jar" \
-    "$HOME/vineflower/build/libs/vineflower.jar"; do
-    if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
-      ok "Vineflower/Fernflower JAR already exists: $candidate"
-      return 0
-    fi
-  done
 
   # Try brew
   if [[ "$PKG_MANAGER" == "brew" ]]; then
@@ -286,22 +348,19 @@ install_vineflower() {
     info "Homebrew formula not available, falling back to direct download."
   fi
 
-  # Download JAR from GitHub releases (no sudo needed)
+  # Download JAR from GitHub releases (no sudo needed). gh_repo, asset
+  # filename template and the pinned fallback version all come from
+  # tools.psv, not hardcoded here.
   info "Installing Vineflower from GitHub releases..."
-  local tag
-  tag=$(gh_latest_tag "Vineflower/vineflower")
-  if [[ -z "$tag" ]]; then
-    fail "Could not determine latest Vineflower version."
-    manual "Download from https://github.com/Vineflower/vineflower/releases/latest"
+  if ! gh_release_download vineflower ".jar"; then
+    fail "Could not download Vineflower."
+    manual "Download from https://github.com/$(tool_field vineflower gh_repo)/releases/latest"
   fi
-
-  local version="${tag#v}"
-  local url="https://github.com/Vineflower/vineflower/releases/download/${tag}/vineflower-${version}.jar"
+  local tmp_jar="$GH_DL_FILE"
+  local version="$GH_DL_VERSION"
   local install_dir="$HOME/.local/share/vineflower"
   mkdir -p "$install_dir"
-
-  info "Downloading Vineflower $version..."
-  download "$url" "$install_dir/vineflower.jar"
+  mv "$tmp_jar" "$install_dir/vineflower.jar"
 
   # Create wrapper script
   mkdir -p "$HOME/.local/bin"
@@ -318,101 +377,6 @@ WRAPPER
 
   ok "Vineflower $version installed to $install_dir/vineflower.jar"
   info "FERNFLOWER_JAR_PATH set to $install_dir/vineflower.jar"
-}
-
-install_dex2jar() {
-  if command -v d2j-dex2jar &>/dev/null || command -v d2j-dex2jar.sh &>/dev/null; then
-    ok "dex2jar already installed"
-    return 0
-  fi
-
-  # Try brew
-  if [[ "$PKG_MANAGER" == "brew" ]]; then
-    info "Installing dex2jar via Homebrew..."
-    if brew install dex2jar 2>/dev/null; then
-      ok "dex2jar installed via Homebrew"
-      return 0
-    fi
-    info "Homebrew formula not available, falling back to direct download."
-  fi
-
-  # Download from GitHub (no sudo needed)
-  info "Installing dex2jar from GitHub releases..."
-  local tag
-  tag=$(gh_latest_tag "ThexXTURBOXx/dex2jar")
-  if [[ -z "$tag" ]]; then
-    # Fallback to a known maintained release if GitHub metadata is unavailable.
-    tag="2.4.35"
-  fi
-
-  local version="${tag#v}"
-  local url="https://github.com/ThexXTURBOXx/dex2jar/releases/download/${tag}/dex-tools-${version}.zip"
-  local tmp_zip
-  tmp_zip=$(mktemp /tmp/dex2jar-XXXXXX.zip)
-
-  info "Downloading dex2jar $version..."
-  if ! download "$url" "$tmp_zip"; then
-    # Try alternate naming
-    url="https://github.com/ThexXTURBOXx/dex2jar/releases/download/${tag}/dex-tools-v${version}.zip"
-    download "$url" "$tmp_zip" || {
-      fail "Download failed."
-      manual "Download from https://github.com/ThexXTURBOXx/dex2jar/releases/latest"
-    }
-  fi
-
-  local install_dir="$HOME/.local/share/dex2jar"
-  rm -rf "$install_dir"
-  mkdir -p "$install_dir"
-  unzip -qo "$tmp_zip" -d "$install_dir"
-  rm -f "$tmp_zip"
-
-  # The zip may contain a top-level directory — find the actual bin location
-  local bin_dir=""
-  if [[ -f "$install_dir/d2j-dex2jar.sh" ]]; then
-    bin_dir="$install_dir"
-  else
-    bin_dir=$(find "$install_dir" -name "d2j-dex2jar.sh" -exec dirname {} \;)
-    bin_dir=${bin_dir%%$'\n'*}
-  fi
-
-  if [[ -z "$bin_dir" ]]; then
-    fail "Could not find d2j-dex2jar.sh in extracted archive."
-    manual "Download and extract manually from https://github.com/ThexXTURBOXx/dex2jar/releases"
-  fi
-
-  chmod +x "$bin_dir"/*.sh 2>/dev/null || true
-
-  mkdir -p "$HOME/.local/bin"
-  for script in "$bin_dir"/d2j-*.sh; do
-    local name
-    name=$(basename "$script" .sh)
-    ln -sf "$script" "$HOME/.local/bin/$name"
-  done
-
-  export PATH="$HOME/.local/bin:$PATH"
-  add_to_profile 'export PATH="$HOME/.local/bin:$PATH"'
-
-  ok "dex2jar $version installed to $install_dir"
-}
-
-install_apktool() {
-  if command -v apktool &>/dev/null; then
-    ok "apktool already installed"
-    return 0
-  fi
-
-  case "$PKG_MANAGER" in
-    brew)    info "Installing apktool via Homebrew..."; brew install apktool ;;
-    apt)     pkg_install "apktool" ;;
-    *)       manual "Install apktool from https://apktool.org/docs/install" ;;
-  esac
-
-  if command -v apktool &>/dev/null; then
-    ok "apktool installed"
-  else
-    fail "apktool installation may have failed."
-    exit 1
-  fi
 }
 
 install_adb() {
@@ -445,12 +409,10 @@ case "$DEP" in
   java)        install_java ;;
   jadx)        install_jadx ;;
   vineflower|fernflower)  install_vineflower ;;
-  dex2jar)     install_dex2jar ;;
-  apktool)     install_apktool ;;
   adb)         install_adb ;;
   *)
     echo "Error: Unknown dependency '$DEP'" >&2
-    echo "Available: java, jadx, vineflower, dex2jar, apktool, adb" >&2
+    echo "Available: java, jadx, vineflower, adb" >&2
     exit 1
     ;;
 esac

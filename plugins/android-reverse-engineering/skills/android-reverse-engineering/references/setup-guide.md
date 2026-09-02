@@ -123,13 +123,40 @@ brew install vineflower
 java -jar "$FERNFLOWER_JAR_PATH" --version
 ```
 
-> **Note**: Fernflower only works on JVM bytecode (JAR, class files). For APK/DEX files, you also need **dex2jar** (see below) as an intermediate conversion step.
+> **Note**: Vineflower/Fernflower only works on JVM bytecode (JAR, class files) — it cannot read an APK or a raw `.dex` directly. To point it at an APK, convert with **dex2jar** first (see below); this is a manual step, not something `install-dep.sh`/`check-deps.sh` set up for you.
 
 ---
 
-## dex2jar (optional, needed for Fernflower on APK files)
+## Manual Fallback Tools
 
-Converts Android DEX bytecode to standard Java JAR files.
+jadx handles APK, DEX, AAB, XAPK and APKM natively, so the tools below are **not** dependencies of this plugin — `install-dep.sh` cannot install them and `check-deps.sh` does not check for them. They stay useful for the specific cases jadx does not cover; install and invoke each one directly when its trigger applies.
+
+### apktool — when jadx's resource decoding falls short
+
+**Trigger:** jadx decompiles Java/Kotlin code well, but its own documentation describes its resource decoding as partial, and real APKs exist where it fails outright on resources while the code decompiles fine — see [jadx issue #1517](https://github.com/skylot/jadx/issues/1517), a resource-only-APK failure. Reach for apktool specifically to decode `AndroidManifest.xml`, layouts, and other binary XML/resources when jadx's `resources/` output is empty, garbled, or errors out.
+
+```bash
+# Ubuntu/Debian
+sudo apt install apktool
+
+# macOS
+brew install apktool
+
+# Manual: https://apktool.org/docs/install
+```
+
+Worked example — decode just the resources jadx couldn't:
+
+```bash
+apktool d app.apk -o app-resources/
+# Inspect the real, non-obfuscated XML apktool produces:
+cat app-resources/AndroidManifest.xml
+ls app-resources/res/layout/
+```
+
+### dex2jar — when you want Vineflower to read an APK
+
+**Trigger:** Vineflower (and upstream Fernflower) decompile JVM bytecode (`.jar`/`.class`) only — jadx is the default decompiler precisely because it reads DEX/APK directly. Reach for dex2jar only when you specifically want Vineflower's output (it is often cleaner on complex generics, lambdas, and switch-expressions) and the input is DEX-based.
 
 ### GitHub Releases
 
@@ -153,33 +180,43 @@ brew install dex2jar
 d2j-dex2jar --help
 ```
 
-### Usage
+Worked example — convert then decompile with Vineflower:
 
 ```bash
 # Convert APK (or DEX) to JAR
 d2j-dex2jar -f -o output.jar app.apk
 
-# Then decompile with Fernflower
+# Then decompile with Vineflower
 java -jar vineflower.jar output.jar decompiled/
+```
+
+### APKEditor — when an XAPK's OBB files make jadx fail
+
+**Trigger:** jadx accepts `.xapk` directly, but only for the split APKs inside it — it does not handle OBB expansion files an XAPK can bundle, and an XAPK that ships OBB data alongside its APKs can make jadx fail on the archive as a whole rather than silently skipping the OBB. Reach for [APKEditor](https://github.com/REAndroid/APKEditor) to merge the XAPK's split APKs into one standalone APK first, and to pull the OBB files out separately for inspection.
+
+```bash
+# Requires Java 17+. Download the latest APKEditor-<version>.jar:
+# https://github.com/REAndroid/APKEditor/releases/latest
+```
+
+Worked example — merge an XAPK's splits, then hand jadx a single APK:
+
+```bash
+# Merge the split APKs inside the XAPK into one installable APK
+java -jar APKEditor.jar m -i app.xapk -o app-merged.apk
+
+# OBB files are not part of the merge — extract them yourself, the XAPK
+# is a plain ZIP:
+unzip -l app.xapk | grep '\.obb$'
+unzip -j app.xapk '*.obb' -d obb/
+
+# Now jadx can decompile the merged APK normally
+jadx -d output app-merged.apk
 ```
 
 ---
 
 ## Optional Tools
-
-### apktool
-
-Useful for decoding resources (XML layouts, drawables) that jadx sometimes handles poorly.
-
-```bash
-# Ubuntu/Debian
-sudo apt install apktool
-
-# macOS
-brew install apktool
-
-# Manual: https://apktool.org/docs/install
-```
 
 ### adb (Android Debug Bridge)
 
