@@ -1,3 +1,6 @@
 FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/find-api-calls.sh
 FIND:  h_retrofit=0; h_okhttp=0; h_ktor=0; h_apollo=0; h_volley=0
-REPLACE:  declare -A MUTATION_H=(); h_retrofit=0; h_okhttp=0; h_ktor=0; h_apollo=0; h_volley=0
+REPLACE:  declare -A h=(); h_retrofit=0; h_okhttp=0; h_ktor=0; h_apollo=0; h_volley=0
+FIND:      "$h_retrofit" "$h_okhttp" "$h_ktor" "$h_apollo" "$h_volley"
+REPLACE:      "${h[retrofit]:-0}" "${h[okhttp]:-0}" "${h[ktor]:-0}" "${h[apollo]:-0}" "${h[volley]:-0}"
+EXPECT:D5: summary counts two Retrofit annotations using a portable counter

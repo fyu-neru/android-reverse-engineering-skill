@@ -1,3 +1,4 @@
 FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh
 FIND:    "$HOME/.local/share/vineflower/vineflower.jar" \
 REPLACE:    "$HOME/.nonexistent-mutation-path/vineflower.jar" \
+EXPECT:D2: decompile finds the jar installed by install-dep.sh

@@ -1,3 +1,4 @@
 FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh
 FIND:  trap 'if [[ -n "${XAPK_EXTRACTED_DIR:-}" ]] && [[ -d "$XAPK_EXTRACTED_DIR" ]]; then rm -rf "$XAPK_EXTRACTED_DIR"; fi' EXIT INT TERM
 REPLACE:  :
+EXPECT:D3: no xapk-extract-* temp dir is left behind on unzip failure

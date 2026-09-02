@@ -1,3 +1,4 @@
 FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/find-api-calls.sh
 FIND:  while [[ $# -gt 1 && "$1" == -* ]]; do
 REPLACE:  while false; do
+EXPECT:D1: --auth finds a plaintext api_key in the sources
