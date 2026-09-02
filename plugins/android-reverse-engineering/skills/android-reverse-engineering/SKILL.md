@@ -9,7 +9,7 @@ Decompile Android APK, XAPK, JAR, and AAR files using jadx and Fernflower/Vinefl
 
 ## Prerequisites
 
-This skill requires **Java JDK 17+** and **jadx** to be installed. **Fernflower/Vineflower** and **dex2jar** are optional but recommended for better decompilation quality. Run the dependency checker to verify:
+This skill requires **Java JDK 17+** and **jadx** to be installed. **Fernflower/Vineflower** is optional but recommended for higher-quality output on JAR/AAR/class files. Run the dependency checker to verify:
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/check-deps.sh
@@ -86,7 +86,7 @@ The install script detects the OS and package manager, then:
 
 **Windows notes**: The PowerShell install script uses `winget`, `scoop`, or `choco` (in that order). If none are available, it downloads directly to `%USERPROFILE%\.local\share\` and adds the directory to the user's PATH. After running `install-dep.ps1`, the PATH is persisted but the current terminal session may not see it. The `check-deps.ps1` and `decompile.ps1` scripts automatically refresh PATH from the user environment, so re-running them will find newly installed tools without restarting the terminal.
 
-**For optional dependencies**, ask the user if they want to install them. Vineflower and dex2jar are recommended for best results.
+**For optional dependencies**, ask the user if they want to install them. Vineflower is recommended for JAR/AAR/class analysis (it is no longer used for APK-family files at all — see Phase 2).
 
 After installation, re-run `check-deps.sh` to confirm everything is in place. Do not proceed to Phase 2 until all required dependencies are OK.
 
@@ -94,7 +94,7 @@ After installation, re-run `check-deps.sh` to confirm everything is in place. Do
 
 Use the decompile wrapper script to process the target file. The script supports three engines: `jadx`, `fernflower`, and `both`.
 
-**Action**: Choose the engine and run the decompile script. The script handles APK, XAPK, JAR, and AAR files.
+**Action**: Choose the engine and run the decompile script. The script handles APK, XAPK, APKM, APKS, AAB, DEX, ZIP, JAR, AAR, and class files.
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.sh [OPTIONS] <file>
@@ -105,9 +105,14 @@ On Windows (PowerShell):
 & "${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.ps1" [OPTIONS] <file>
 ```
 
-For **XAPK** files (ZIP bundles containing multiple APKs, used by APKPure and similar stores): the script automatically extracts the archive, identifies all APK files inside (base + split APKs), and decompiles each one into a separate subdirectory. The XAPK manifest is copied to the output for reference.
+For **XAPK/APKM/APKS/AAB/DEX/ZIP** files (split bundles used by APKPure and similar stores, Android App Bundles, and raw DEX/ZIP archives): jadx reads these formats natively as of 2.0.0. There is no longer a hand-rolled extraction step — the file is handed straight to jadx, which decompiles every contained APK/DEX into a single merged source tree under `<output>/sources/`.
 
-**Split/bundled APK detection**: Some APKs are actually bundle wrappers — the outer APK contains `base.apk` plus `split_config.*.apk` files inside its resources directory. When this happens, jadx will decompile the thin wrapper and produce very few Java files. The decompile scripts automatically detect this (≤10 Java files + inner APKs present) and re-decompile `base.apk` into an `<output>/base/` subdirectory. Config-only splits (ABI, language, density) are skipped. The main decompiled source will be in `<output>/base/sources/`.
+**Two capabilities from the old hand-rolled XAPK extraction are gone and are not replaced elsewhere**:
+- The XAPK's `manifest.json` is **not** copied into the output (it used to land at `<output>/xapk-manifest.json`). If you need it, extract the `.xapk` yourself (it is a ZIP) and read `manifest.json` directly.
+- OBB files are **not** enumerated or reported. If you need to know whether an XAPK ships OBB data, extract the `.xapk` yourself and look for `*.obb`.
+- The **output layout also changed**: previously each contained APK got its own subdirectory (`<output>/<apk-name>/`); now everything jadx extracts from the bundle merges into one `<output>/sources/` tree, the same layout a plain `.apk` has always produced.
+
+**Split/bundled APK detection**: Some APKs are actually bundle wrappers — the outer APK contains `base.apk` plus `split_config.*.apk` files inside its resources directory. When this happens, jadx will decompile the thin wrapper and produce very few Java files. The decompile scripts automatically detect this (≤10 Java files + inner APKs present) and re-decompile `base.apk` into an `<output>/base/` subdirectory. Config-only splits (ABI, language, density) are skipped. The main decompiled source will be in `<output>/base/sources/`. This is unrelated to the XAPK format above — it is jadx's own `resources/` output being inspected after the fact, not a pre-decompilation extraction step, and it is unaffected by the XAPK changes.
 
 Options:
 - `-o <dir>` — Custom output directory (default: `<filename>-decompiled`)
@@ -119,15 +124,15 @@ Options:
 
 | Situation | Engine |
 |---|---|
-| First pass on any APK | `jadx` (fastest, handles resources) |
-| JAR/AAR library analysis | `fernflower` (better Java output) |
-| jadx output has warnings/broken code | `both` (compare and pick best per class) |
-| Complex lambdas, generics, streams | `fernflower` |
+| Any APK, XAPK, APKM, APKS, AAB, DEX, or ZIP | `jadx` (the only engine that reads these) |
+| JAR/AAR/class library analysis | `fernflower` (better Java output) |
+| jadx output has warnings/broken code | `both` (JAR/AAR/class only — see below) |
+| Complex lambdas, generics, streams (JAR/AAR/class) | `fernflower` |
 | Quick overview of a large APK | `jadx --no-res` |
 
-When using `--engine both`, the outputs go into `<output>/jadx/` and `<output>/fernflower/` respectively, with a comparison summary at the end showing file counts and jadx warning counts. Review classes with jadx warnings in the Fernflower output for better code.
+**The `fernflower`/`both` engines only accept `.jar`, `.aar`, and `.class` input.** dex2jar has been removed from this plugin entirely (2.0.0) — converting DEX to JVM bytecode first threw away exactly the metadata (lambdas, generic signatures, records, switch-on-string) that made Fernflower/Vineflower worth running, and jadx reads DEX directly and produces better results. Running `--engine fernflower` or `--engine both` against an APK/XAPK/DEX/ZIP-family file is refused with an explanatory error instead of attempting a conversion. Use `--engine jadx` for those.
 
-For APK files with Fernflower, the script automatically uses dex2jar as an intermediate step. dex2jar must be installed for this to work.
+When using `--engine both` on a `.jar`/`.aar`/`.class` file, the outputs go into `<output>/jadx/` and `<output>/fernflower/` respectively, with a comparison summary at the end showing file counts and jadx warning counts. Review classes with jadx warnings in the Fernflower output for better code.
 
 See `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/jadx-usage.md` and `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/fernflower-usage.md` for the full CLI references.
 
@@ -307,7 +312,7 @@ At the end of the workflow, deliver:
 
 ## References
 
-- `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/setup-guide.md` — Installing Java, jadx, Fernflower/Vineflower, dex2jar, and optional tools
+- `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/setup-guide.md` — Installing Java, jadx, Fernflower/Vineflower, and optional tools
 - `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/jadx-usage.md` — jadx CLI options and workflows
 - `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/fernflower-usage.md` — Fernflower/Vineflower CLI options, when to use, APK workflow
 - `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/api-extraction-patterns.md` — Library-specific search patterns and documentation template

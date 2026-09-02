@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh
+FIND:    local ordered=(${named[@]+"${named[@]}"} ${single[@]+"${single[@]}"})
+REPLACE:    local ordered=("${packages[@]}")
+EXPECT:D6: print_structure surfaces com/ among dozens of single-letter obfuscated package dirs

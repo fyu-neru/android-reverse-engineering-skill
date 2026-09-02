@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
-# decompile.sh — Decompile APK/JAR/AAR using jadx, fernflower, or both
+# decompile.sh — Decompile APK/XAPK/APKM/APKS/AAB/DEX/ZIP/JAR/AAR/CLASS using jadx, fernflower, or both
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/tools.sh
+. "$SCRIPT_DIR/lib/tools.sh"
 
 usage() {
   cat <<EOF
 Usage: decompile.sh [OPTIONS] <file>
 
-Decompile an Android APK, XAPK, JAR, or AAR file.
+Decompile an Android package or bytecode archive.
 
 Arguments:
-  <file>            Path to the .apk, .xapk, .jar, or .aar file
+  <file>            Path to a .apk, .xapk, .apkm, .apks, .aab, .dex, .zip,
+                    .jar, .aar, or .class file
 
 Options:
   -o, --output DIR  Output directory (default: <filename>-decompiled)
@@ -19,12 +24,16 @@ Options:
   -h, --help        Show this help message
 
 Engines:
-  jadx        Use jadx (default). Handles APK/JAR/AAR natively, decodes resources.
+  jadx        Use jadx (default). Handles APK/XAPK/APKM/APKS/AAB/DEX/ZIP/JAR/AAR
+              natively (including split bundles) and decodes resources.
   fernflower  Use Fernflower/Vineflower. Better on complex Java, lambdas, generics.
-              For APK files, requires dex2jar as intermediate step.
+              Only accepts .jar, .aar, and .class input — it decompiles JVM
+              bytecode, not DEX, and dex2jar is no longer part of this pipeline
+              (see the design doc for why). Use --engine jadx for anything else.
   both        Run both decompilers side by side for comparison.
               jadx output  → <output>/jadx/
               fernflower   → <output>/fernflower/
+              (requires a .jar, .aar, or .class input, same as --engine fernflower)
 
 Environment:
   FERNFLOWER_JAR_PATH   Path to fernflower.jar or vineflower.jar
@@ -32,7 +41,7 @@ Environment:
 Examples:
   decompile.sh app-release.apk
   decompile.sh app-bundle.xapk
-  decompile.sh --engine both --deobf app-release.apk
+  decompile.sh --engine both --deobf library.jar
   decompile.sh --engine fernflower library.jar
 EOF
   exit 0
@@ -71,9 +80,9 @@ fi
 ext="${INPUT_FILE##*.}"
 ext_lower=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
 case "$ext_lower" in
-  apk|xapk|jar|aar) ;;
+  apk|xapk|apkm|apks|aab|dex|zip|jar|aar|class) ;;
   *)
-    echo "Error: Unsupported file type '.$ext'. Expected .apk, .xapk, .jar, or .aar" >&2
+    echo "Error: Unsupported file type '.$ext'. Expected one of: apk, xapk, apkm, apks, aab, dex, zip, jar, aar, class" >&2
     exit 1
     ;;
 esac
@@ -92,99 +101,6 @@ INPUT_FILE_ABS=$(realpath "$INPUT_FILE")
 if [[ -z "$OUTPUT_DIR" ]]; then
   OUTPUT_DIR="${BASENAME}-decompiled"
 fi
-
-# --- XAPK handling ---
-# XAPK is a ZIP containing one or more APKs, optional OBB files, and a manifest.json.
-# We extract it, find all APKs inside, and decompile each one.
-XAPK_EXTRACTED_DIR=""
-XAPK_APK_FILES=()
-
-if [[ "$ext_lower" == "xapk" ]]; then
-  XAPK_EXTRACTED_DIR=$(mktemp -d "${TMPDIR:-/tmp}/xapk-extract-XXXXXX")
-  # Remove the extraction dir on any exit path. Without this an early
-  # failure under set -e leaks the whole unpacked bundle, which can be
-  # hundreds of MB for a large XAPK. The explicit rm -rf on the success
-  # path is harmless — rm -rf on a missing path is a no-op.
-  trap 'if [[ -n "${XAPK_EXTRACTED_DIR:-}" ]] && [[ -d "$XAPK_EXTRACTED_DIR" ]]; then rm -rf "$XAPK_EXTRACTED_DIR"; fi' EXIT INT TERM
-  echo "=== Extracting XAPK archive ==="
-  unzip -qo "$INPUT_FILE_ABS" -d "$XAPK_EXTRACTED_DIR"
-
-  # Show manifest.json if present
-  if [[ -f "$XAPK_EXTRACTED_DIR/manifest.json" ]]; then
-    echo "XAPK manifest found:"
-    cat "$XAPK_EXTRACTED_DIR/manifest.json"
-    echo
-  fi
-
-  # Find all APK files inside
-  while IFS= read -r -d '' apk_file; do
-    XAPK_APK_FILES+=("$apk_file")
-  done < <(find "$XAPK_EXTRACTED_DIR" -name "*.apk" -print0 | sort -z)
-
-  if [[ ${#XAPK_APK_FILES[@]} -eq 0 ]]; then
-    echo "Error: No APK files found inside XAPK archive." >&2
-    rm -rf "$XAPK_EXTRACTED_DIR"
-    exit 1
-  fi
-
-  echo "Found ${#XAPK_APK_FILES[@]} APK(s) inside XAPK:"
-  for f in "${XAPK_APK_FILES[@]}"; do
-    echo "  - $(basename "$f")"
-  done
-  echo
-fi
-
-# --- Locate Fernflower/Vineflower ---
-# Fills VF_ARGV with the command that runs the decompiler, mirroring the
-# resolution order check-deps.sh uses: env override, then a CLI on PATH,
-# then known install locations. Returns 1 when nothing is found.
-#
-# An argv array rather than a command string: paths routinely contain
-# spaces (/Users/My Name/..., C:\Program Files\...) and a joined string
-# cannot be expanded safely.
-VF_ARGV=()
-vineflower_argv() {
-  VF_ARGV=()
-
-  if [[ -n "${FERNFLOWER_JAR_PATH:-}" ]] && [[ -f "$FERNFLOWER_JAR_PATH" ]]; then
-    VF_ARGV=(java -jar "$FERNFLOWER_JAR_PATH")
-    return 0
-  fi
-
-  local cli
-  for cli in vineflower fernflower; do
-    if command -v "$cli" &>/dev/null; then
-      VF_ARGV=("$cli")
-      return 0
-    fi
-  done
-
-  local candidate
-  for candidate in \
-    "$HOME/.local/share/vineflower/vineflower.jar" \
-    "$HOME/fernflower/build/libs/fernflower.jar" \
-    "$HOME/vineflower/build/libs/vineflower.jar" \
-    "$HOME/fernflower/fernflower.jar" \
-    "$HOME/vineflower/vineflower.jar"; do
-    if [[ -f "$candidate" ]]; then
-      VF_ARGV=(java -jar "$candidate")
-      return 0
-    fi
-  done
-
-  return 1
-}
-
-# --- Locate dex2jar ---
-find_dex2jar() {
-  if command -v d2j-dex2jar &>/dev/null; then
-    echo "d2j-dex2jar"
-  elif command -v d2j-dex2jar.sh &>/dev/null; then
-    echo "d2j-dex2jar.sh"
-  else
-    return 1
-  fi
-}
 
 # --- jadx decompilation ---
 run_jadx() {
@@ -233,50 +149,33 @@ run_jadx() {
 # --- Fernflower decompilation ---
 run_fernflower() {
   local out_dir="$1"
-  local jar_to_decompile=""
-  local converted_jar=""
-  local intermediate_dir="$out_dir/intermediate"
+  local jar_to_decompile="$INPUT_FILE_ABS"
   local ff_status=0
-  local d2j_status=0
   local count=0
   local ff_timeout_seconds="${FERNFLOWER_TIMEOUT_SECONDS:-900}"
 
-  if ! vineflower_argv; then
+  # dex2jar has been removed from this pipeline (2.0.0): converting DEX to
+  # JVM bytecode first threw away exactly the metadata (lambdas, generic
+  # signatures, records, switch-on-string) that made Fernflower/Vineflower
+  # worth running in the first place, and jadx reads DEX directly and
+  # better. So this engine now only ever runs on real JVM bytecode.
+  case "$ext_lower" in
+    jar|aar|class) ;;
+    *)
+      echo "Error: The fernflower/vineflower engine only decompiles .jar, .aar, and .class files." >&2
+      echo "Got '.$ext_lower'. dex2jar conversion has been removed — jadx reads DEX/APK-family files natively and produces better results." >&2
+      echo "Use --engine jadx for .apk, .xapk, .apkm, .apks, .aab, .dex, and .zip files." >&2
+      return 1
+      ;;
+  esac
+
+  if ! tool_argv vineflower; then
     echo "Error: Fernflower/Vineflower JAR not found." >&2
     echo "Set FERNFLOWER_JAR_PATH or see references/setup-guide.md" >&2
     return 1
   fi
 
   mkdir -p "$out_dir"
-
-  # For APK/AAR, we need dex2jar first to convert DEX→JAR
-  if [[ "$ext_lower" == "apk" || "$ext_lower" == "aar" ]]; then
-    local d2j
-    if ! d2j=$(find_dex2jar); then
-      echo "Error: dex2jar is required to use Fernflower on .$ext_lower files." >&2
-      echo "Install dex2jar — see references/setup-guide.md" >&2
-      return 1
-    fi
-
-    echo "Converting $ext_lower to JAR with dex2jar..."
-    mkdir -p "$intermediate_dir"
-    converted_jar="$intermediate_dir/${BASENAME}-dex2jar.jar"
-    if "$d2j" -f -o "$converted_jar" "$INPUT_FILE_ABS" 2>&1; then
-      d2j_status=0
-    else
-      d2j_status=$?
-    fi
-    if [[ ! -f "$converted_jar" ]]; then
-      echo "Error: dex2jar conversion failed with status $d2j_status." >&2
-      return 1
-    fi
-    if [[ $d2j_status -ne 0 ]]; then
-      echo "Warning: dex2jar exited with status $d2j_status but produced $converted_jar; continuing." >&2
-    fi
-    jar_to_decompile="$converted_jar"
-  else
-    jar_to_decompile="$INPUT_FILE_ABS"
-  fi
 
   # Build fernflower args
   local ff_args=()
@@ -288,15 +187,15 @@ run_fernflower() {
   ff_args+=("$jar_to_decompile")
   ff_args+=("$out_dir")
 
-  echo "Running: ${VF_ARGV[*]} ${ff_args[*]}"
+  echo "Running: ${TOOL_ARGV[*]} ${ff_args[*]}"
   if command -v timeout &>/dev/null && [[ "$ff_timeout_seconds" =~ ^[0-9]+$ ]] && (( ff_timeout_seconds > 0 )); then
     echo "Fernflower timeout: ${ff_timeout_seconds}s (override with FERNFLOWER_TIMEOUT_SECONDS)"
-    if timeout "${ff_timeout_seconds}s" "${VF_ARGV[@]}" "${ff_args[@]}"; then
+    if timeout "${ff_timeout_seconds}s" "${TOOL_ARGV[@]}" "${ff_args[@]}"; then
       ff_status=0
     else
       ff_status=$?
     fi
-  elif "${VF_ARGV[@]}" "${ff_args[@]}"; then
+  elif "${TOOL_ARGV[@]}" "${ff_args[@]}"; then
     ff_status=0
   else
     ff_status=$?
@@ -323,29 +222,20 @@ run_fernflower() {
     local direct_count=0
     direct_count=$(find "$out_dir" \
       -path "$sources_dir" -prune -o \
-      -path "$intermediate_dir" -prune -o \
       -name "*.java" -type f -print | wc -l)
     if [[ $direct_count -gt 0 ]]; then
       while IFS= read -r -d '' entry; do
         mv "$entry" "$sources_dir"/
       done < <(find "$out_dir" -mindepth 1 -maxdepth 1 \
         ! -name "sources" \
-        ! -name "intermediate" \
         -print0)
       count=$(find "$sources_dir" -name "*.java" | wc -l)
     fi
   fi
 
-  # Clean up intermediate dex2jar output
   if [[ $count -gt 0 ]]; then
     echo "Fernflower output: $sources_dir/"
     echo "Java files decompiled by Fernflower: $count"
-    if [[ -n "${converted_jar:-}" ]] && [[ -f "${converted_jar:-}" ]]; then
-      rm -f "$converted_jar"
-    fi
-    if [[ -d "$intermediate_dir" ]]; then
-      rmdir "$intermediate_dir" 2>/dev/null || true
-    fi
     if [[ $ff_status -ne 0 ]]; then
       echo "Warning: Fernflower/Vineflower exited with status $ff_status after writing $count Java files; treating this as partial success." >&2
       return 2
@@ -353,11 +243,7 @@ run_fernflower() {
     return 0
   fi
 
-  if [[ -n "${converted_jar:-}" ]] && [[ -f "${converted_jar:-}" ]]; then
-    echo "Error: Fernflower/Vineflower produced no Java output. Intermediate dex2jar artifact kept at $converted_jar" >&2
-  else
-    echo "Error: Fernflower/Vineflower produced no Java output." >&2
-  fi
+  echo "Error: Fernflower/Vineflower produced no Java output." >&2
 
   if [[ $ff_status -ne 0 ]]; then
     if [[ $ff_status -eq 124 ]]; then
@@ -383,21 +269,47 @@ print_structure() {
       [[ -n "$pkg" ]] && packages+=("$pkg")
     done < <(find "$src_dir" -mindepth 1 -maxdepth 3 -type d | LC_ALL=C sort)
 
-    local limit=${#packages[@]}
-    if (( limit > 20 )); then
-      limit=20
-    fi
-
-    if (( limit == 0 )); then
+    local total=${#packages[@]}
+    if (( total == 0 )); then
       echo "(none)"
       return
     fi
 
+    # Obfuscated APKs commonly rename every top-level package to a single
+    # letter (a/, b/, c/, ...). At maxdepth 3, each of those single-letter
+    # roots contributes several nested entries, so a flat positional cap
+    # can fill up entirely on obfuscated noise before a real package like
+    # com/ — which sorts after two dozen+ single-letter names — is ever
+    # reached. List multi-character top-level packages first so a real
+    # package name can never be crowded out by single-letter ones, then
+    # fill any remaining slots with the single-letter entries.
+    local cap=20
+    local named=() single=()
+    local pkg top
+    for pkg in "${packages[@]}"; do
+      top="${pkg%%/*}"
+      if [[ ${#top} -eq 1 ]]; then
+        single+=("$pkg")
+      else
+        named+=("$pkg")
+      fi
+    done
+    local ordered=(${named[@]+"${named[@]}"} ${single[@]+"${single[@]}"})
+
+    local shown=$cap
+    if (( shown > total )); then
+      shown=$total
+    fi
+
     local i=0
-    while (( i < limit )); do
-      echo "${packages[$i]}"
+    while (( i < shown )); do
+      echo "${ordered[$i]}"
       ((i += 1))
     done
+
+    if (( total > cap )); then
+      echo "... and $((total - cap)) more (showing $cap of $total; single-letter package dirs are listed last)"
+    fi
   fi
 }
 
@@ -518,90 +430,64 @@ echo "=== Decompiling $INPUT_FILE (engine: $ENGINE) ==="
 echo "Output directory: $OUTPUT_DIR"
 echo
 
-if [[ "$ext_lower" == "xapk" ]]; then
-  # Decompile each APK found inside the XAPK
-  mkdir -p "$OUTPUT_DIR"
+# XAPK/APKM/APKS/AAB/DEX/ZIP files are handed to jadx directly (no
+# hand-rolled extraction step): jadx natively understands these formats
+# (see the design doc's audit of jadx's usage string), extracts and
+# decompiles every contained APK/DEX into one merged source tree, and does
+# it without the config-split blindness the old per-APK loop here had.
+#
+# Two capabilities are lost as a result, and are not silently reintroduced:
+# jadx does not copy the XAPK's manifest.json into its output, and it does
+# not enumerate OBB files. Both are recorded in SKILL.md. The output
+# layout also changes: previously each contained APK got its own
+# subdirectory under $OUTPUT_DIR; jadx now merges everything into a single
+# tree, same as it always has for a plain .apk.
+decompile_single "$INPUT_FILE_ABS" "$OUTPUT_DIR" ""
 
-  # Copy XAPK manifest for reference
-  if [[ -f "$XAPK_EXTRACTED_DIR/manifest.json" ]]; then
-    cp "$XAPK_EXTRACTED_DIR/manifest.json" "$OUTPUT_DIR/xapk-manifest.json"
-  fi
+# --- Split/bundled APK detection ---
+# Some APKs are bundles: the outer APK contains base.apk + split_config.*.apk
+# inside the resources directory. jadx will decompile the thin outer wrapper
+# and produce very few Java files. Detect this and re-decompile base.apk.
+sources_dir="$OUTPUT_DIR/sources"
+resources_dir="$OUTPUT_DIR/resources"
+if [[ -d "$sources_dir" && -d "$resources_dir" ]]; then
+  java_count=$(find "$sources_dir" -name "*.java" -type f 2>/dev/null | wc -l)
+  base_apk=$(find "$resources_dir" -maxdepth 1 -name "base.apk" -type f 2>/dev/null)
+  base_apk=${base_apk%%$'\n'*}
+  inner_apk_count=$(find "$resources_dir" -maxdepth 1 -name "*.apk" -type f 2>/dev/null | wc -l)
 
-  # Copy OBB file list for reference
-  obb_files=()
-  while IFS= read -r -d '' obb; do
-    obb_files+=("$obb")
-  done < <(find "$XAPK_EXTRACTED_DIR" -name "*.obb" -print0 2>/dev/null)
-  if [[ ${#obb_files[@]} -gt 0 ]]; then
-    echo "OBB files found (not decompiled, data-only):"
-    for obb in "${obb_files[@]}"; do
-      echo "  - $(basename "$obb") ($(du -h "$obb" | cut -f1))"
-    done
+  if [[ "$java_count" -le 10 && -n "$base_apk" ]]; then
     echo
-  fi
-
-  for apk_file in "${XAPK_APK_FILES[@]}"; do
-    apk_name=$(basename "$apk_file" .apk)
+    echo "=== Split/bundled APK detected ==="
+    echo "Outer APK produced only $java_count Java file(s) but contains $inner_apk_count inner APK(s):"
+    find "$resources_dir" -maxdepth 1 -name "*.apk" -type f -exec basename {} \; | while read -r f; do echo "  - $f"; done
     echo
-    echo "======================================================"
-    decompile_single "$apk_file" "$OUTPUT_DIR/$apk_name" "$apk_name.apk"
-  done
+    echo "Decompiling base.apk (contains the actual app code)..."
+    decompile_single "$base_apk" "$OUTPUT_DIR/base" "base.apk"
 
-  # Cleanup extracted XAPK
-  rm -rf "$XAPK_EXTRACTED_DIR"
-
-  echo
-  echo "=== XAPK decompilation complete ==="
-  echo "Subdirectories in $OUTPUT_DIR/:"
-  ls -1 "$OUTPUT_DIR/"
-else
-  decompile_single "$INPUT_FILE_ABS" "$OUTPUT_DIR" ""
-
-  # --- Split/bundled APK detection ---
-  # Some APKs are bundles: the outer APK contains base.apk + split_config.*.apk
-  # inside the resources directory. jadx will decompile the thin outer wrapper
-  # and produce very few Java files. Detect this and re-decompile base.apk.
-  sources_dir="$OUTPUT_DIR/sources"
-  resources_dir="$OUTPUT_DIR/resources"
-  if [[ -d "$sources_dir" && -d "$resources_dir" ]]; then
-    java_count=$(find "$sources_dir" -name "*.java" -type f 2>/dev/null | wc -l)
-    base_apk=$(find "$resources_dir" -maxdepth 1 -name "base.apk" -type f 2>/dev/null)
-    base_apk=${base_apk%%$'\n'*}
-    inner_apk_count=$(find "$resources_dir" -maxdepth 1 -name "*.apk" -type f 2>/dev/null | wc -l)
-
-    if [[ "$java_count" -le 10 && -n "$base_apk" ]]; then
+    # Decompile non-config split APKs
+    while IFS= read -r -d '' split_apk; do
+      split_name=$(basename "$split_apk" .apk)
+      case "$split_name" in
+        base|split_config.*) continue ;;
+      esac
       echo
-      echo "=== Split/bundled APK detected ==="
-      echo "Outer APK produced only $java_count Java file(s) but contains $inner_apk_count inner APK(s):"
-      find "$resources_dir" -maxdepth 1 -name "*.apk" -type f -exec basename {} \; | while read -r f; do echo "  - $f"; done
+      echo "Decompiling $split_name.apk..."
+      decompile_single "$split_apk" "$OUTPUT_DIR/$split_name" "$split_name.apk"
+    done < <(find "$resources_dir" -maxdepth 1 -name "*.apk" -type f -print0 2>/dev/null)
+
+    # Report skipped config splits
+    config_splits=$(find "$resources_dir" -maxdepth 1 -name "split_config.*.apk" -type f 2>/dev/null)
+    if [[ -n "$config_splits" ]]; then
       echo
-      echo "Decompiling base.apk (contains the actual app code)..."
-      decompile_single "$base_apk" "$OUTPUT_DIR/base" "base.apk"
-
-      # Decompile non-config split APKs
-      while IFS= read -r -d '' split_apk; do
-        split_name=$(basename "$split_apk" .apk)
-        case "$split_name" in
-          base|split_config.*) continue ;;
-        esac
-        echo
-        echo "Decompiling $split_name.apk..."
-        decompile_single "$split_apk" "$OUTPUT_DIR/$split_name" "$split_name.apk"
-      done < <(find "$resources_dir" -maxdepth 1 -name "*.apk" -type f -print0 2>/dev/null)
-
-      # Report skipped config splits
-      config_splits=$(find "$resources_dir" -maxdepth 1 -name "split_config.*.apk" -type f 2>/dev/null)
-      if [[ -n "$config_splits" ]]; then
-        echo
-        echo "Skipped config splits (resource/ABI only):"
-        echo "$config_splits" | while read -r f; do echo "  - $(basename "$f")"; done
-      fi
-
-      echo
-      echo "Main decompiled source is in: $OUTPUT_DIR/base/sources/"
+      echo "Skipped config splits (resource/ABI only):"
+      echo "$config_splits" | while read -r f; do echo "  - $(basename "$f")"; done
     fi
-  fi
 
-  echo
-  echo "=== Decompilation complete ==="
+    echo
+    echo "Main decompiled source is in: $OUTPUT_DIR/base/sources/"
+  fi
 fi
+
+echo
+echo "=== Decompilation complete ==="

@@ -154,7 +154,17 @@ function Resolve-Tool {
         foreach ($p in ($probe -split ',')) {
             $cmd = Get-Command $p -CommandType Application -ErrorAction SilentlyContinue
             if ($cmd -and $cmd.Source) {
-                return [pscustomobject]@{ Kind = $kind; Path = $cmd.Source }
+                # A jar-kind tool (per tools.psv) can still be found on PATH
+                # as a real CLI launcher (e.g. a package manager's
+                # `vineflower` script) rather than the raw .jar this
+                # project's own installer places at the candidate paths.
+                # A probe match is always something directly executable,
+                # regardless of what tools.psv says the installed artifact
+                # normally is - report it as 'cli' so a caller invokes it
+                # directly instead of wrapping it in `java -jar`, which
+                # would fail immediately. Mirrors the equivalent fix in
+                # tools.sh's tool_argv.
+                return [pscustomobject]@{ Kind = 'cli'; Path = $cmd.Source }
             }
         }
     }

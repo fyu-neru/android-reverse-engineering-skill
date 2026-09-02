@@ -71,20 +71,104 @@ assert_contains "$out2" "VINEFLOWER_CLI_ARGV" \
 assert_not_contains "$out2" "JAVA_SHOULD_NOT_RUN" \
   "D2: decompile does not fall back to java -jar when a CLI is present"
 
-# --- D3: the XAPK temp dir must be removed even when decompilation fails ---
-# The trap must fire on any failure path, including unzip failure before APKs are found.
-# Create a dummy invalid XAPK (no archiver dependency, works on all platforms).
-work3=$(new_tmpdir)
-echo "not a zip" > "$work3/bundle.xapk"
+# D3 ("the XAPK temp dir must be removed even when decompilation fails") is
+# gone, not merely moved: 2.0.0 deletes the hand-rolled XAPK extraction
+# entirely (mktemp -d, its guarding trap, the manifest/OBB handling, and
+# the per-APK loop) in favor of handing .xapk straight to jadx, which
+# understands the format natively. There is no longer a temp dir for a
+# trap to clean up, so the code this test guarded no longer exists. It is
+# deleted here — along with tests/mutations/d3-no-trap.mutation, which
+# targeted the same trap — rather than left in place where it could only
+# ever pass trivially.
 
-before=$(ls -d "${TMPDIR:-/tmp}"/xapk-extract-* 2>/dev/null | wc -l | tr -d ' ')
-output=$(cd "$work3" && "${BASH:-bash}" "$SCRIPT" bundle.xapk 2>&1) || true
-after=$(ls -d "${TMPDIR:-/tmp}"/xapk-extract-* 2>/dev/null | wc -l | tr -d ' ')
+# --- D5: the fernflower/vineflower engine must refuse non-JVM-bytecode
+# input now that dex2jar has been removed, rather than silently doing
+# nothing useful or crashing deeper in the pipeline. ---
+work5=$(new_tmpdir)
+touch "$work5/app.apk"
 
-assert_contains "$output" "=== Extracting XAPK archive ===" \
-  "D3: decompile reaches XAPK extraction (code path exercised)"
-assert_equals "$after" "$before" \
-  "D3: no xapk-extract-* temp dir is left behind on unzip failure"
+out5=$(cd "$work5" && "${BASH:-bash}" "$SCRIPT" --engine fernflower app.apk 2>&1)
+status5=$?
+
+assert_equals "$status5" "1" \
+  "[all] D5: --engine fernflower on a .apk exits non-zero (dex2jar removed, no DEX support)"
+assert_contains "$out5" "only decompiles .jar, .aar, and .class" \
+  "[all] D5: --engine fernflower refusal names the accepted extensions"
+assert_contains "$out5" "dex2jar conversion has been removed" \
+  "[all] D5: --engine fernflower refusal explains WHY .apk is rejected (not just that it is)"
+
+# --- D6: print_structure must not let an obfuscated APK's dozens of
+# single-letter package directories crowd out a real package name like
+# com/ once the 20-entry cap is applied. ---
+work6=$(new_tmpdir)
+bin6=$(new_tmpdir)
+# A single-letter top-level package ("a") that alone branches into more
+# than 20 nested directories sorts entirely before "com" under a plain
+# lexicographic sort (single letters a-z would not: "com" interleaves
+# between "c" and "d" regardless of how many other letters exist, so a
+# flat a-z spread never actually reproduces the crowding-out this test
+# guards against — a single wide single-letter branch does).
+make_stub_bin "$bin6" jadx 'out=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-d" ]; then out="$a"; fi
+  prev="$a"
+done
+mkdir -p "$out/sources/com/example/network"
+i=1
+while [ "$i" -le 25 ]; do
+  mkdir -p "$out/sources/a/sub$i"
+  i=$((i + 1))
+done
+echo "class A {}" > "$out/sources/com/example/network/A.java"
+exit 0'
+
+touch "$work6/obfuscated.apk"
+out6=$(cd "$work6" && PATH="$bin6:$PATH" "${BASH:-bash}" "$SCRIPT" obfuscated.apk 2>&1)
+
+assert_contains "$out6" "com/example" \
+  "[all] D6: print_structure surfaces com/ among dozens of single-letter obfuscated package dirs"
+assert_contains "$out6" "more (showing" \
+  "[all] D6: print_structure states the true total when the cap truncates the listing"
+
+# --- D8: .xapk is handed directly to jadx; no hand-rolled extraction step
+# remains (2.0.0 deletes it — jadx supports .xapk/.apkm/.apks/.aab/.dex/.zip
+# natively, per the design doc's audit of jadx's own usage string). ---
+work8=$(new_tmpdir)
+bin8=$(new_tmpdir)
+make_stub_bin "$bin8" jadx 'echo "JADX_ARGV: $*"
+out=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-d" ]; then out="$a"; fi
+  prev="$a"
+done
+mkdir -p "$out/sources"
+exit 0'
+
+touch "$work8/bundle.xapk"
+out8=$(cd "$work8" && PATH="$bin8:$PATH" "${BASH:-bash}" "$SCRIPT" bundle.xapk 2>&1)
+
+assert_contains "$out8" "JADX_ARGV" \
+  "[all] D8: a .xapk file is handed straight to jadx"
+assert_contains "$out8" "bundle.xapk" \
+  "[all] D8: jadx receives the original .xapk path, not an extracted inner APK"
+assert_not_contains "$out8" "Extracting XAPK archive" \
+  "[all] D8: no hand-rolled XAPK extraction step remains"
+
+# --- D9: the widened extension whitelist accepts the formats jadx added
+# native support for (.apkm, .dex) instead of rejecting them up front. ---
+work9=$(new_tmpdir)
+touch "$work9/app.apkm"
+out9=$(cd "$work9" && PATH="$bin8:$PATH" "${BASH:-bash}" "$SCRIPT" app.apkm 2>&1)
+assert_not_contains "$out9" "Unsupported file type" \
+  "[all] D9: .apkm is accepted by the widened extension whitelist"
+
+work9b=$(new_tmpdir)
+touch "$work9b/classes.dex"
+out9b=$(cd "$work9b" && PATH="$bin8:$PATH" "${BASH:-bash}" "$SCRIPT" classes.dex 2>&1)
+assert_not_contains "$out9b" "Unsupported file type" \
+  "[all] D9: .dex is accepted by the widened extension whitelist"
 
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"

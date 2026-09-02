@@ -157,7 +157,42 @@ tool_argv() {
   TOOL_ARGV=()
   path=$(tool_resolve "$id") || return 1
   kind=$(tool_field "$id" kind) || return 1
+
   if [ "$kind" = "jar" ]; then
+    # A jar-kind tool can still resolve to a real CLI executable when the
+    # PATH probe finds one (e.g. a package manager's `vineflower` launcher
+    # script) rather than the raw .jar this project's own installer
+    # places at the candidate paths. tool_resolve's env-override and
+    # candidate matches are always the literal jar named in tools.psv, but
+    # a probe match is whatever the probe name resolved to on PATH -- run
+    # it directly instead of wrapping it in `java -jar`. This mirrors the
+    # match-kind disambiguation check-deps.sh already does for its own
+    # output wording; without it, a CLI found on PATH gets handed to
+    # `java -jar <CLI path>`, which fails immediately.
+    local probe p matched_probe="" oldifs oldopts
+    probe=$(tool_field "$id" probe) || return 1
+    if [ "$probe" != "-" ]; then
+      oldifs="$IFS"; oldopts="$-"
+      IFS=','
+      set -f
+      for p in $probe; do
+        IFS="$oldifs"
+        if [ "$(command -v "$p" 2>/dev/null)" = "$path" ]; then
+          matched_probe="$p"
+          IFS=','
+          break
+        fi
+        IFS=','
+      done
+      IFS="$oldifs"
+      case "$oldopts" in *f*) ;; *) set +f ;; esac
+    fi
+
+    if [ -n "$matched_probe" ]; then
+      TOOL_ARGV=("$path")
+      return 0
+    fi
+
     java=$(tool_resolve java) || return 1
     TOOL_ARGV=("$java" -jar "$path")
   else
