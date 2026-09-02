@@ -18,7 +18,7 @@ class Api {
 }
 JAVA
 
-out=$(bash "$SCRIPT" --auth "$src" 2>&1)
+out=$("${BASH:-bash}" "$SCRIPT" --auth "$src" 2>&1)
 
 assert_contains "$out" "SECRET123" \
   "D1: --auth finds a plaintext api_key in the sources"
@@ -33,7 +33,7 @@ package com.example;
 class Upper { static final String X = "API_KEY=UPPERCASE456"; }
 JAVA
 
-out2=$(bash "$SCRIPT" --auth "$src2" 2>&1)
+out2=$("${BASH:-bash}" "$SCRIPT" --auth "$src2" 2>&1)
 assert_contains "$out2" "UPPERCASE456" \
   "D1: --auth is still case-insensitive after the fix"
 
@@ -54,7 +54,7 @@ class Net {
 }
 JAVA
 
-out3=$(bash "$SCRIPT" --all "$src3" 2>&1)
+out3=$("${BASH:-bash}" "$SCRIPT" --all "$src3" 2>&1)
 assert_contains "$out3" "Retrofit=2" \
   "D5: summary counts two Retrofit annotations using a portable counter"
 assert_contains "$out3" "OkHttp=1" \

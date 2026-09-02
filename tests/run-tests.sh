@@ -7,11 +7,20 @@ total_run=0
 total_failed=0
 failed_files=""
 
+# Report the interpreter actually running this file. Callers (CI, humans)
+# use this line to assert which bash actually ran the suite — printing it
+# is not enough on its own, but it is the fact any such assertion is built
+# on. $BASH is the absolute path of the running shell in both bash 3.2 and
+# 5.x; propagate it (below) rather than bare "bash" so a `/bin/bash
+# run-tests.sh` invocation doesn't quietly hand off to a newer bash
+# resolved from PATH for every test file and every script under test.
+echo "bash version: $BASH_VERSION"
+
 for t in "$TESTS_DIR"/test-*.sh; do
   [ -f "$t" ] || continue
   echo "== $(basename "$t")"
   # Each test file prints "SUMMARY <run> <failed>" as its final line.
-  output=$(bash "$t" 2>&1)
+  output=$("${BASH:-bash}" "$t" 2>&1)
   echo "$output" | grep -v '^SUMMARY '
   summary=$(echo "$output" | grep '^SUMMARY ' | tail -1)
   if [ -z "$summary" ]; then

@@ -20,7 +20,7 @@ set -uo pipefail
 echo "  ok   - something"
 INNER2
 
-out=$(bash "$work/tests/run-tests.sh" 2>&1 || true)
+out=$("${BASH:-bash}" "$work/tests/run-tests.sh" 2>&1 || true)
 
 # These check the specific ERROR wording the runner is supposed to emit,
 # not just that the filename appears anywhere in the output — the

@@ -24,7 +24,7 @@ echo "class A {}" > "$out/sources/com/example/network/A.java"
 exit 0'
 
 touch "$work/app.apk"
-out=$(cd "$work" && PATH="$bin:$PATH" bash "$SCRIPT" app.apk 2>&1)
+out=$(cd "$work" && PATH="$bin:$PATH" "${BASH:-bash}" "$SCRIPT" app.apk 2>&1)
 
 assert_contains "$out" "com/example/network" \
   "D4: print_structure lists nested packages using a portable find"
@@ -47,7 +47,7 @@ work=$(new_tmpdir)
 touch "$work/lib.jar"
 
 out=$(cd "$work" && HOME="$home" PATH="$bin:$PATH" \
-      env -u FERNFLOWER_JAR_PATH bash "$SCRIPT" --engine fernflower lib.jar 2>&1)
+      env -u FERNFLOWER_JAR_PATH "${BASH:-bash}" "$SCRIPT" --engine fernflower lib.jar 2>&1)
 
 assert_contains "$out" "$home/.local/share/vineflower/vineflower.jar" \
   "D2: decompile finds the jar installed by install-dep.sh"
@@ -64,7 +64,7 @@ work2=$(new_tmpdir)
 touch "$work2/lib.jar"
 
 out2=$(cd "$work2" && HOME="$home2" PATH="$bin2:$PATH" \
-       env -u FERNFLOWER_JAR_PATH bash "$SCRIPT" --engine fernflower lib.jar 2>&1)
+       env -u FERNFLOWER_JAR_PATH "${BASH:-bash}" "$SCRIPT" --engine fernflower lib.jar 2>&1)
 
 assert_contains "$out2" "VINEFLOWER_CLI_ARGV" \
   "D2: decompile uses a vineflower CLI found on PATH"
@@ -78,7 +78,7 @@ work3=$(new_tmpdir)
 echo "not a zip" > "$work3/bundle.xapk"
 
 before=$(ls -d "${TMPDIR:-/tmp}"/xapk-extract-* 2>/dev/null | wc -l | tr -d ' ')
-output=$(cd "$work3" && bash "$SCRIPT" bundle.xapk 2>&1) || true
+output=$(cd "$work3" && "${BASH:-bash}" "$SCRIPT" bundle.xapk 2>&1) || true
 after=$(ls -d "${TMPDIR:-/tmp}"/xapk-extract-* 2>/dev/null | wc -l | tr -d ' ')
 
 assert_contains "$output" "=== Extracting XAPK archive ===" \
