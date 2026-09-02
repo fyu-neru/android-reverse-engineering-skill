@@ -50,8 +50,14 @@ else
 fi
 
 # --- Fernflower / Vineflower ---
+# Resolution order mirrors decompile.sh/decompile.ps1 exactly: an explicit
+# FERNFLOWER_JAR_PATH override wins over anything on PATH, then a CLI on
+# PATH, then the known install locations.
 ff_found=false
-if command -v vineflower &>/dev/null; then
+if [[ -n "${FERNFLOWER_JAR_PATH:-}" ]] && [[ -f "$FERNFLOWER_JAR_PATH" ]]; then
+  echo "[OK] Fernflower/Vineflower JAR found: $FERNFLOWER_JAR_PATH"
+  ff_found=true
+elif command -v vineflower &>/dev/null; then
   echo "[OK] vineflower CLI detected"
   ff_found=true
 elif command -v fernflower &>/dev/null; then
@@ -59,13 +65,12 @@ elif command -v fernflower &>/dev/null; then
   ff_found=true
 else
   for candidate in \
-    "${FERNFLOWER_JAR_PATH:-}" \
     "$HOME/.local/share/vineflower/vineflower.jar" \
     "$HOME/fernflower/build/libs/fernflower.jar" \
     "$HOME/vineflower/build/libs/vineflower.jar" \
     "$HOME/fernflower/fernflower.jar" \
     "$HOME/vineflower/vineflower.jar"; do
-    if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
+    if [[ -f "$candidate" ]]; then
       echo "[OK] Fernflower/Vineflower JAR found: $candidate"
       ff_found=true
       break

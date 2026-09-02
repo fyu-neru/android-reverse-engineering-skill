@@ -81,29 +81,36 @@ if ($jadxBin) {
 }
 
 # --- Fernflower / Vineflower ---
+# Resolution order mirrors decompile.sh/decompile.ps1 exactly: an explicit
+# FERNFLOWER_JAR_PATH override wins over anything on PATH, then a CLI on
+# PATH, then the known install locations.
 $ffFound = $false
-$vineflowerBin = Get-Command vineflower -ErrorAction SilentlyContinue
-$fernflowerBin = Get-Command fernflower -ErrorAction SilentlyContinue
-if ($vineflowerBin) {
-    Write-Host "[OK] vineflower CLI detected"
-    $ffFound = $true
-} elseif ($fernflowerBin) {
-    Write-Host "[OK] fernflower CLI detected"
+if ($env:FERNFLOWER_JAR_PATH -and (Test-Path $env:FERNFLOWER_JAR_PATH -ErrorAction SilentlyContinue)) {
+    Write-Host "[OK] Fernflower/Vineflower JAR found: $env:FERNFLOWER_JAR_PATH"
     $ffFound = $true
 } else {
-    $ffCandidates = @(
-        $env:FERNFLOWER_JAR_PATH,
-        "$env:USERPROFILE\.local\share\vineflower\vineflower.jar",
-        "$env:USERPROFILE\fernflower\build\libs\fernflower.jar",
-        "$env:USERPROFILE\vineflower\build\libs\vineflower.jar",
-        "$env:USERPROFILE\fernflower\fernflower.jar",
-        "$env:USERPROFILE\vineflower\vineflower.jar"
-    )
-    foreach ($candidate in $ffCandidates) {
-        if ($candidate -and (Test-Path $candidate -ErrorAction SilentlyContinue)) {
-            Write-Host "[OK] Fernflower/Vineflower JAR found: $candidate"
-            $ffFound = $true
-            break
+    $vineflowerBin = Get-Command vineflower -ErrorAction SilentlyContinue
+    $fernflowerBin = Get-Command fernflower -ErrorAction SilentlyContinue
+    if ($vineflowerBin) {
+        Write-Host "[OK] vineflower CLI detected"
+        $ffFound = $true
+    } elseif ($fernflowerBin) {
+        Write-Host "[OK] fernflower CLI detected"
+        $ffFound = $true
+    } else {
+        $ffCandidates = @(
+            "$env:USERPROFILE\.local\share\vineflower\vineflower.jar",
+            "$env:USERPROFILE\fernflower\build\libs\fernflower.jar",
+            "$env:USERPROFILE\vineflower\build\libs\vineflower.jar",
+            "$env:USERPROFILE\fernflower\fernflower.jar",
+            "$env:USERPROFILE\vineflower\vineflower.jar"
+        )
+        foreach ($candidate in $ffCandidates) {
+            if ($candidate -and (Test-Path $candidate -ErrorAction SilentlyContinue)) {
+                Write-Host "[OK] Fernflower/Vineflower JAR found: $candidate"
+                $ffFound = $true
+                break
+            }
         }
     }
 }
