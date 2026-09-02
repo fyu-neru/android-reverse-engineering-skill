@@ -1,0 +1,7 @@
+id|required|platform|kind|probe|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
+# Lines whose id starts with '#' are comments and are skipped by both readers.
+# Values must not contain '"' or '|'. Placeholders: {HOME}, {VERSION}.
+java|required|all|path|java|JAVA_BIN|-|-|-|-|-|Java 17+ runtime, required by jadx and Vineflower
+jadx|required|all|path|jadx|JADX_BIN|{HOME}/.local/share/jadx/bin/jadx|skylot/jadx|jadx-{VERSION}.zip|1.5.6|-|Primary decompiler for APK, DEX, AAB, XAPK and APKM
+vineflower|optional|all|jar|vineflower,fernflower|FERNFLOWER_JAR_PATH|{HOME}/.local/share/vineflower/vineflower.jar;{HOME}/vineflower/vineflower.jar;{HOME}/vineflower/build/libs/vineflower.jar|Vineflower/vineflower|vineflower-{VERSION}.jar|1.12.0|-|Better output on real JVM bytecode: .jar, .aar and .class only
+adb|optional|all|path|adb|ADB_BIN|-|-|-|-|-|Pull an APK off a connected device

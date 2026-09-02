@@ -8,5 +8,8 @@
 *.md text eol=lf
 *.json text eol=lf
 
+# Pipe-separated tool metadata — always LF
+*.psv text eol=lf
+
 # Test harness — always LF
 tests/**/*.sh text eol=lf
