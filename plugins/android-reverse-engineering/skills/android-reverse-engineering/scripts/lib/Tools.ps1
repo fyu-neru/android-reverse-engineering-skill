@@ -34,7 +34,7 @@ function Get-ToolsLines {
     $lines = [regex]::Split($raw, "\r\n|\n")
     # A trailing newline in the file produces one trailing empty element
     # after the split; drop it so it isn't mistaken for a blank PSV line.
-    if ($lines.Count -gt 1 -and $lines[$lines.Count - 1] -eq '') {
+    if ($lines.Count -gt 1 -and $lines[$lines.Count - 1] -ceq '') {
         $lines = $lines[0..($lines.Count - 2)]
     }
     return $lines
@@ -42,9 +42,40 @@ function Get-ToolsLines {
 
 function Expand-ToolHome {
     param([Parameter(Mandatory = $true)][string]$Value)
+    # NOT cross-reader tested: $env:USERPROFILE and bash's $HOME are
+    # different literal strings even on the same Git-Bash-on-Windows
+    # machine (e.g. C:\Users\foo vs /c/Users/foo), so a verbatim
+    # string comparison of the *expanded literal* between tools.sh's
+    # _tools_expand and this function is structurally meaningless - it
+    # would always "diverge" even when both are correct. What tests/
+    # test-tools-psv.sh checks instead (same-platform) is that both
+    # readers expand {HOME} to a path that resolves to the SAME file on
+    # disk, which is the actual property that matters.
     $homeDir = $env:USERPROFILE
     if (-not $homeDir) { $homeDir = $HOME }
     return $Value.Replace('{HOME}', $homeDir)
+}
+
+# Split-PsvRow -Line <line>
+# Splits one '|'-delimited PSV line into fields. Deliberately NOT just
+# `$line -split '\|'`: plain -split keeps a trailing empty element when
+# the line ends with the delimiter (e.g. 'a|b|' -> @('a','b','')), while
+# bash's `for f in $line` with IFS='|' drops exactly that one trailing
+# empty field (verified: 'a|b|' -> 2 fields, 'a|||' -> 3 fields - always
+# exactly one fewer than a naive split when the line ends with the
+# delimiter). Without this, a row whose last column is empty is read as
+# present-and-empty here but absent in tools.sh - the two readers would
+# disagree about whether the column exists at all.
+function Split-PsvRow {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Line)
+    $fields = $Line -split '\|'
+    if ($fields.Length -eq 1 -and $fields[0] -ceq '') {
+        return , @()
+    }
+    if ($fields.Length -gt 0 -and $fields[$fields.Length - 1] -ceq '') {
+        $fields = $fields[0..($fields.Length - 2)]
+    }
+    return , $fields
 }
 
 # Get-ToolField -Id <id> -Column <column-name>
@@ -57,17 +88,22 @@ function Get-ToolField {
     $lines = Get-ToolsLines
     if (-not $lines -or $lines.Count -eq 0) { return $null }
 
-    $header = $lines[0] -split '\|'
+    $header = Split-PsvRow -Line $lines[0]
     $foundIndex = -1
     for ($i = 0; $i -lt $header.Length; $i++) {
-        if ($header[$i] -eq $Column) { $foundIndex = $i; break }
+        # -ceq: case-sensitive, matching bash's byte-exact `[ "$col" =
+        # "$want_col" ]`. Plain -eq on strings is culture-aware and
+        # case-INsensitive in PowerShell ('JAR' -eq 'jar' is $true),
+        # which would silently accept a typo'd or wrongly-cased column
+        # name here that tools.sh would correctly reject.
+        if ($header[$i] -ceq $Column) { $foundIndex = $i; break }
     }
     if ($foundIndex -lt 0) { return $null }
 
     $prefix = "$Id|"
     foreach ($line in $lines) {
         if (-not $line.StartsWith($prefix)) { continue }
-        $fields = $line -split '\|'
+        $fields = Split-PsvRow -Line $line
         if ($foundIndex -lt $fields.Length) {
             return $fields[$foundIndex]
         }
@@ -85,11 +121,11 @@ function Resolve-Tool {
     $psvKind = Get-ToolField -Id $Id -Column 'kind'
     if ($null -eq $psvKind) { return $null }
     $kind = 'cli'
-    if ($psvKind -eq 'jar') { $kind = 'jar' }
+    if ($psvKind -ceq 'jar') { $kind = 'jar' }
 
     $envName = Get-ToolField -Id $Id -Column 'env_override'
     if ($null -eq $envName) { return $null }
-    if ($envName -ne '-') {
+    if ($envName -cne '-') {
         $envVal = [Environment]::GetEnvironmentVariable($envName)
         if ($envVal -and (Test-Path -LiteralPath $envVal -PathType Leaf)) {
             return [pscustomobject]@{ Kind = $kind; Path = $envVal }
@@ -98,7 +134,7 @@ function Resolve-Tool {
 
     $probe = Get-ToolField -Id $Id -Column 'probe'
     if ($null -eq $probe) { return $null }
-    if ($probe -ne '-') {
+    if ($probe -cne '-') {
         foreach ($p in ($probe -split ',')) {
             $cmd = Get-Command $p -CommandType Application -ErrorAction SilentlyContinue
             if ($cmd -and $cmd.Source) {
@@ -109,7 +145,7 @@ function Resolve-Tool {
 
     $candidates = Get-ToolField -Id $Id -Column 'candidates'
     if ($null -eq $candidates) { return $null }
-    if ($candidates -ne '-') {
+    if ($candidates -cne '-') {
         foreach ($c in ($candidates -split ';')) {
             $expanded = Expand-ToolHome -Value $c
             if (Test-Path -LiteralPath $expanded -PathType Leaf) {
@@ -135,12 +171,16 @@ function Get-ToolList {
     $first = $true
     foreach ($line in $lines) {
         if ($first) { $first = $false; continue }
-        if ($line -eq '' -or $line.StartsWith('#')) { continue }
+        if ($line -ceq '' -or $line.StartsWith('#')) { continue }
         $id = $line.Split('|')[0]
         if ($id.StartsWith('#')) { continue }
         if ($Want) {
             $req = Get-ToolField -Id $id -Column 'required'
-            if ($req -ne $Want) { continue }
+            # -cne: case-sensitive. -ValidateSet on $Want accepts its
+            # values case-insensitively, so a plain -ne here would let a
+            # differently-cased $Want silently match a $req that
+            # tools.sh's byte-exact `[ "$req" = "$want" ]` would reject.
+            if ($req -cne $Want) { continue }
         }
         $result += $id
     }

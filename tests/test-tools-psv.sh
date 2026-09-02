@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-tools-psv.sh — reader tests and cross-reader consistency for
-# tools.psv, tools.sh and Tools.ps1 (Task 1, commit 5f55944).
+# tools.psv, tools.sh and Tools.ps1 (Task 1, commit 5f55944; fix round 1
+# on Tasks 1+2 hardened tools.sh/Tools.ps1's parsing rules themselves).
 #
 # This is the highest-value artifact of the 2.0.0 release: the two readers
 # must agree exactly, or a divergence recreates the class of bug the whole
@@ -58,7 +59,7 @@ assert_equals "$bash_purpose" "$expected_purpose" \
   "[all] tools.sh: tool_field jadx purpose returns the expected non-empty value from the real tools.psv"
 
 # =====================================================================
-# Fixture for groups 2-4: a private fake plugin root so these tests do
+# Fixture for groups 2-4b: a private fake plugin root so these tests do
 # not depend on (or corrupt) the real tools.psv.
 # =====================================================================
 order_root=$(new_tmpdir)
@@ -166,13 +167,44 @@ assert_equals "$argv_jar_elem2" "$fixhome/gadget-candidate.jar" \
   "[all] tool_argv: kind=jar's third element is the resolved jar path"
 
 # =====================================================================
+# Group 4b — glob safety (fix round 1, Finding 1): a PSV field value that
+# contains a shell glob character must not be pathname-expanded while
+# tools.sh splits the line. Reproduced pre-fix: with IFS='|' and an
+# unquoted `for f in $line`, bash applies pathname expansion to each
+# resulting word — a probe value of 'zzz-glob-probe-*' silently became
+# two words when files matching that pattern existed in cwd, shifting
+# every column after it by one. This test seeds exactly such files in a
+# dedicated cwd and checks a column several positions later (pin) reads
+# its own value, not a neighbor's.
+# =====================================================================
+globdir=$(new_tmpdir)
+touch "$globdir/zzz-glob-probe-A" "$globdir/zzz-glob-probe-B"
+
+glob_root=$(new_tmpdir)
+glob_lib="$glob_root/skills/android-reverse-engineering/scripts/lib"
+mkdir -p "$glob_lib"
+cat > "$glob_lib/tools.psv" <<'PSV'
+id|required|platform|kind|probe|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
+star|required|all|path|zzz-glob-probe-*|ENVOVERRIDE-STAR|CANDIDATES-STAR|GHREPO-STAR|ASSET-STAR|PINVALUE-STAR|PINDIGEST-STAR|PURPOSE-STAR
+PSV
+
+glob_out=$(cd "$globdir" && CLAUDE_PLUGIN_ROOT="$glob_root" TOOLS_SH_PATH="$TOOLS_SH" \
+  "${BASH:-bash}" -c '. "$TOOLS_SH_PATH"; tool_field star pin')
+assert_equals "$glob_out" "PINVALUE-STAR" \
+  "[all] tool_field: a field value containing '*' is not pathname-expanded even when matching files exist in cwd (glob safety)"
+
+# =====================================================================
 # Group 5 — static: the two readers reference an identical set of field
 # names. This is the one that fails on every platform (§6.3): it is a
 # pure text comparison of the two source files, no interpreter needed.
 # =====================================================================
-bash_fields=$(grep -oE 'tool_field "\$[A-Za-z_][A-Za-z0-9_]*" [A-Za-z_][A-Za-z0-9_]*' "$TOOLS_SH" \
-  | awk '{print $NF}' | sort -u)
-ps_fields=$(grep -oE "\-Column '[A-Za-z_][A-Za-z0-9_]*'" "$TOOLS_PS1" \
+bash_field_call_pattern='tool_field "\$[A-Za-z_][A-Za-z0-9_]*"'
+bash_field_extract_pattern='tool_field "\$[A-Za-z_][A-Za-z0-9_]*" [A-Za-z_][A-Za-z0-9_]*'
+ps_field_call_pattern='Get-ToolField -Id \$[A-Za-z_][A-Za-z0-9_]*'
+ps_field_extract_pattern="-Column '[A-Za-z_][A-Za-z0-9_]*'"
+
+bash_fields=$(grep -oE -- "$bash_field_extract_pattern" "$TOOLS_SH" | awk '{print $NF}' | sort -u)
+ps_fields=$(grep -oE -- "$ps_field_extract_pattern" "$TOOLS_PS1" \
   | sed -E "s/-Column '([A-Za-z_][A-Za-z0-9_]*)'/\1/" | sort -u)
 
 if [ -n "$bash_fields" ]; then _bf_state=nonempty; else _bf_state=empty; fi
@@ -185,6 +217,27 @@ assert_equals "$_pf_state" "nonempty" \
 assert_equals "$bash_fields" "$ps_fields" \
   "[all] static: tools.sh and Tools.ps1 reference the exact same set of tool_field/Get-ToolField column names"
 
+# --- Finding 4 (fix round 1): the extraction regexes above only
+# recognize a bareword (tools.sh) or single-quoted-literal (Tools.ps1)
+# second argument. A future call site written as tool_field "$id"
+# 'purpose', -Column "purpose", or -Column $col is invisible to them —
+# and if it happens on BOTH sides at once, the two (silently
+# under-collected) sets still match, so the check above passes while
+# proving nothing about the unmatched call. Guard against that by
+# counting call SITES independently (a looser pattern that recognizes
+# the call regardless of how its second argument is written) and
+# asserting it equals the number of names actually extracted; a
+# mismatch means some call form is going uncounted. ---
+bash_call_site_count=$(grep -oE -- "$bash_field_call_pattern" "$TOOLS_SH" | wc -l | tr -d ' ')
+bash_extract_count=$(grep -oE -- "$bash_field_extract_pattern" "$TOOLS_SH" | wc -l | tr -d ' ')
+assert_equals "$bash_extract_count" "$bash_call_site_count" \
+  "[all] static: every tool_field call site in tools.sh yields an extractable bareword column name (no call form is silently uncounted)"
+
+ps_call_site_count=$(grep -oE -- "$ps_field_call_pattern" "$TOOLS_PS1" | wc -l | tr -d ' ')
+ps_extract_count=$(grep -oE -- "$ps_field_extract_pattern" "$TOOLS_PS1" | wc -l | tr -d ' ')
+assert_equals "$ps_extract_count" "$ps_call_site_count" \
+  "[all] static: every Get-ToolField call site in Tools.ps1 yields an extractable single-quoted column name (no call form is silently uncounted)"
+
 # =====================================================================
 # Group 6 — static: tools.psv's header matches the union of fields the
 # two readers use. A header column no reader consumes at all (not even a
@@ -192,34 +245,77 @@ assert_equals "$bash_fields" "$ps_fields" \
 # lacks, must both fail.
 #
 # Design note: tools.psv (Task 1) deliberately carries columns neither
-# resolution reader touches yet — platform, gh_repo, asset, pin,
-# pin_digest are reserved for install-dep.sh/check-deps.sh migrations
-# later in the 2.0.0 roadmap (design doc §7), and purpose is
-# documentation-only by the PSV's own header comment and is never meant
-# to be machine-consumed. Those are listed explicitly below so this test
-# still catches real drift (a typo'd column, a column silently dropped by
-# one reader) without permanently red-flagging intentional forward
-# columns.
+# resolution reader touches yet. Two different reasons, tracked
+# separately (fix round 1, Finding 5):
+#
+#   - RESERVED_FUTURE_CONSUMER: platform, gh_repo, asset, pin, pin_digest
+#     are reserved for install-dep.sh/check-deps.sh migrations later in
+#     the 2.0.0 roadmap (design doc §7). Each one is expected to gain a
+#     real tool_field/Get-ToolField consumer in a later task, and MUST be
+#     struck from this list in that same change — otherwise it silently
+#     joins `used` while staying `reserved`, the allowlist union never
+#     shrinks, and nothing ever prompts anyone to edit it. The assertion
+#     below enforces that: it fails the moment any reserved-future column
+#     shows up in `used`, forcing the list to shrink as tasks land.
+#
+#   - DOC_ONLY_COLUMNS: purpose is documentation-only per the PSV's own
+#     header comment, and by design is never meant to be read by
+#     tool_field/Get-ToolField at all (its value exists for a human
+#     reading tools.psv, not for resolution logic) — it is not "waiting
+#     for a future consumer" the way the columns above are, so it is not
+#     subject to the shrink-as-consumed rule and lives in its own list.
 # =====================================================================
 header_line=$(head -1 "$TOOLS_PSV")
 header_fields=$(printf '%s' "$header_line" | tr '|' '\n' | grep -vFx 'id' | sort -u)
-reserved_fields=$(printf '%s\n' platform gh_repo asset pin pin_digest purpose | sort -u)
 used_fields=$(printf '%s\n%s\n' "$bash_fields" "$ps_fields" | sort -u)
+
+RESERVED_FUTURE_CONSUMER="platform gh_repo asset pin pin_digest"
+DOC_ONLY_COLUMNS="purpose"
+reserved_future_sorted=$(printf '%s\n' $RESERVED_FUTURE_CONSUMER | sort -u)
+doc_only_sorted=$(printf '%s\n' $DOC_ONLY_COLUMNS | sort -u)
 
 missing_from_header=$(comm -23 <(printf '%s\n' "$used_fields") <(printf '%s\n' "$header_fields"))
 assert_equals "$missing_from_header" "" \
   "[all] static: tools.psv header contains every field name referenced by tool_field/Get-ToolField"
 
-allowed_fields=$(printf '%s\n%s\n' "$used_fields" "$reserved_fields" | sort -u)
+allowed_fields=$(printf '%s\n%s\n%s\n' "$used_fields" "$reserved_future_sorted" "$doc_only_sorted" | sort -u)
 extra_in_header=$(comm -23 <(printf '%s\n' "$header_fields") <(printf '%s\n' "$allowed_fields"))
 assert_equals "$extra_in_header" "" \
-  "[all] static: every tools.psv header column is either used by a reader or an explicitly reserved future/documentation column"
+  "[all] static: every tools.psv header column is either used by a reader, reserved for a future consumer, or documentation-only"
+
+# The enforcing half of Finding 5: a reserved-future column that has
+# acquired a real consumer must be struck from RESERVED_FUTURE_CONSUMER
+# in the same change. If it isn't, it shows up in both `used` and
+# `reserved` at once — this intersection must be empty.
+reserved_now_used=$(comm -12 <(printf '%s\n' "$used_fields") <(printf '%s\n' "$reserved_future_sorted"))
+assert_equals "$reserved_now_used" "" \
+  "[all] static: no reserved-for-future-consumer column has acquired a reader yet (strike it from RESERVED_FUTURE_CONSUMER in the same change that adds its first tool_field/Get-ToolField call)"
 
 # =====================================================================
 # Group 7 — PowerShell runtime consistency: the same fixture fed to both
 # readers, compared verbatim (no trim/case-fold/sort — §6.2 shape 4).
 # Only runs where pwsh or powershell exists; SKIP is visibly distinct
 # from a passing assertion (§6.2 shape 3).
+#
+# The fixture below also covers (fix round 1):
+#   - Finding 2: `rtrail`'s last column (purpose) is genuinely empty, to
+#     verify Tools.ps1's trailing-empty-field handling now matches
+#     tools.sh's (both must report the column as absent, not present-and-
+#     empty).
+#   - Finding 7: a comment row and a blank row, matching the bash-only
+#     fixture above — Get-ToolList's own comment/blank-skipping logic had
+#     no test before this.
+#   - Finding 8: `rhome` uses a real {HOME} placeholder (rather than a
+#     pre-expanded literal path like the other rows), with HOME and
+#     USERPROFILE both pointed at the same native directory for their
+#     respective child processes, to prove both readers' {HOME}
+#     expansion resolves to the SAME file on disk. This does not (and
+#     structurally cannot) compare the two interpreters' *default*
+#     home-directory derivation as raw strings — $HOME and
+#     $env:USERPROFILE naturally differ in representation even on one
+#     Git-Bash-on-Windows machine (e.g. /c/Users/foo vs C:\Users\foo) —
+#     see the comment on Expand-ToolHome in Tools.ps1 and on
+#     _tools_expand in tools.sh for why that omission is deliberate.
 # =====================================================================
 PWSH_BIN=""
 if command -v pwsh >/dev/null 2>&1; then
@@ -239,28 +335,34 @@ else
 
   cat > "$cross_lib/tools.psv" <<PSV
 id|required|platform|kind|probe|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
+# comment row: must be skipped by both readers
+
 rone|required|all|path|-|RONE_ENV|$native_home/rone-candidate|-|-|-|-|Cross-reader env-priority test
 rtwo|optional|all|jar|-|-|$native_home/rtwo-candidate.jar|-|-|-|-|Cross-reader candidate-only jar test
 rthree|required|all|path|-|RTHREE_ENV|$native_home/rthree-candidate|-|-|-|-|Cross-reader env-invalid-falls-through test
 rfour|optional|all|path|-|-|$native_home/rfour-candidate-MISSING|-|-|-|-|Cross-reader tool-missing test
+rhome|required|all|path|-|-|{HOME}/rhome-candidate|-|-|-|-|Cross-reader HOME-expansion test
+rtrail|required|all|path|-|-|-|-|-|-|-|
 PSV
 
   touch "$cross_home/rone-env-target" "$cross_home/rone-candidate" \
-        "$cross_home/rtwo-candidate.jar" "$cross_home/rthree-candidate"
+        "$cross_home/rtwo-candidate.jar" "$cross_home/rthree-candidate" \
+        "$cross_home/rhome-candidate"
   # rfour-candidate-MISSING deliberately not created.
 
   rone_env_native="$native_home/rone-env-target"
   rthree_env_missing_native="$native_home/rthree-env-target-MISSING"
+  rhome_candidate_native="$native_home/rhome-candidate"
   native_cross_root=$(to_native_path "$cross_root")
   native_tools_ps1=$(to_native_path "$TOOLS_PS1")
 
   bash_cross_out=$(CLAUDE_PLUGIN_ROOT="$cross_root" TOOLS_SH_PATH="$TOOLS_SH" \
-    RONE_ENV="$rone_env_native" RTHREE_ENV="$rthree_env_missing_native" \
+    HOME="$native_home" RONE_ENV="$rone_env_native" RTHREE_ENV="$rthree_env_missing_native" \
     "${BASH:-bash}" -c '
       . "$TOOLS_SH_PATH"
       printf "LIST=%s\n" "$(tool_list | tr "\n" ",")"
-      for id in rone rtwo rthree rfour; do
-        for col in kind env_override candidates required; do
+      for id in rone rtwo rthree rfour rhome rtrail; do
+        for col in kind env_override candidates required purpose; do
           v=$(tool_field "$id" "$col")
           if [ $? -ne 0 ]; then v="<NULL>"; fi
           printf "FIELD=%s|%s|%s\n" "$id" "$col" "$v"
@@ -278,8 +380,8 @@ $ErrorActionPreference = 'Stop'
 . $env:TOOLS_PS1_PATH
 $ids = Get-ToolList
 Write-Output ("LIST=" + (($ids -join ',') + ','))
-foreach ($id in @('rone', 'rtwo', 'rthree', 'rfour')) {
-    foreach ($col in @('kind', 'env_override', 'candidates', 'required')) {
+foreach ($id in @('rone', 'rtwo', 'rthree', 'rfour', 'rhome', 'rtrail')) {
+    foreach ($col in @('kind', 'env_override', 'candidates', 'required', 'purpose')) {
         $v = Get-ToolField -Id $id -Column $col
         if ($null -eq $v) { $v = '<NULL>' }
         Write-Output ("FIELD=" + $id + "|" + $col + "|" + $v)
@@ -299,15 +401,15 @@ EOF
   # data itself, so it does not fall into the over-normalization trap
   # (§6.2 shape 4) — a real divergence in a field VALUE survives this.
   ps_cross_out=$(CLAUDE_PLUGIN_ROOT="$native_cross_root" TOOLS_PS1_PATH="$native_tools_ps1" \
-    RONE_ENV="$rone_env_native" RTHREE_ENV="$rthree_env_missing_native" \
+    USERPROFILE="$native_home" RONE_ENV="$rone_env_native" RTHREE_ENV="$rthree_env_missing_native" \
     "$PWSH_BIN" -NoProfile -NonInteractive -File "$ps_script" 2>&1 | tr -d '\r')
 
   # --- preconditions (§6.2 shapes 1 & 2), asserted BEFORE the full-output
   # comparison, each against a specific known-non-empty expected value ---
-  assert_contains "$bash_cross_out" "LIST=rone,rtwo,rthree,rfour," \
-    "[win] precondition: tools.sh loaded the cross-reader fixture (tool_list returns the expected 4 ids, not zero)"
-  assert_contains "$ps_cross_out" "LIST=rone,rtwo,rthree,rfour," \
-    "[win] precondition: Tools.ps1 loaded the cross-reader fixture (Get-ToolList returns the expected 4 ids, not zero)"
+  assert_contains "$bash_cross_out" "LIST=rone,rtwo,rthree,rfour,rhome,rtrail," \
+    "[win] precondition: tools.sh loaded the cross-reader fixture (tool_list returns the expected 6 ids, skipping the comment/blank rows)"
+  assert_contains "$ps_cross_out" "LIST=rone,rtwo,rthree,rfour,rhome,rtrail," \
+    "[win] precondition: Tools.ps1 loaded the cross-reader fixture (Get-ToolList returns the expected 6 ids, skipping the comment/blank rows)"
   assert_contains "$bash_cross_out" "RESOLVE=rone|$rone_env_native" \
     "[win] precondition: tools.sh resolves rone via env override to the expected non-empty path"
   assert_contains "$ps_cross_out" "RESOLVE=rone|$rone_env_native" \
@@ -317,9 +419,82 @@ EOF
   assert_contains "$ps_cross_out" "RESOLVE=rfour|<NULL>" \
     "[win] precondition: Tools.ps1 reports rfour (no env, no probe, missing candidate) as unresolved, not a false match"
 
+  # --- Finding 2: a trailing-empty last column must be reported as
+  # absent (not present-and-empty) by both readers ---
+  assert_contains "$bash_cross_out" "FIELD=rtrail|purpose|<NULL>" \
+    "[win] precondition: tools.sh reports a trailing-empty final column as absent, not present-and-empty"
+  assert_contains "$ps_cross_out" "FIELD=rtrail|purpose|<NULL>" \
+    "[win] precondition: Tools.ps1 reports a trailing-empty final column as absent, not present-and-empty (fix round 1, Finding 2)"
+
+  # --- Finding 8: both readers expand {HOME} to a path resolving to the
+  # same file on disk, when pointed at the same native directory ---
+  assert_contains "$bash_cross_out" "RESOLVE=rhome|$rhome_candidate_native" \
+    "[win] precondition: tools.sh expands {HOME} in a candidate path to the expected non-empty resolved path"
+  assert_contains "$ps_cross_out" "RESOLVE=rhome|$rhome_candidate_native" \
+    "[win] Tools.ps1 expands {HOME} to the same resolved file tools.sh does, when both point at the same native directory"
+
   # --- the actual cross-reader comparison: verbatim, no normalization ---
   assert_equals "$bash_cross_out" "$ps_cross_out" \
     "[win] runtime cross-reader consistency: tool_list/tool_field/tool_resolve output from tools.sh exactly matches Get-ToolList/Get-ToolField/Resolve-Tool output from Tools.ps1 on the same fixture"
+
+  # =====================================================================
+  # Group 7b (fix round 1, Finding 6) — Tools.ps1's OWN resolution order:
+  # env override must win over a PATH probe match. Group 7 above sets
+  # probe='-' on every row to sidestep a structural limitation
+  # (make_stub_bin's extensionless stub is invisible to PowerShell's
+  # Get-Command -CommandType Application on Windows, which only
+  # recognizes PATHEXT extensions), so nothing above exercises this
+  # order in Tools.ps1 at all — and until now, no mutation targeting
+  # Tools.ps1 existed either. A real .cmd stub IS visible to Get-Command
+  # Application, closing both gaps: this assertion is the [win]
+  # counterpart to bash Group 3 Case 1, and it is what
+  # psv-ps-reader-order.mutation's EXPECT: targets.
+  # =====================================================================
+  porder_root=$(new_tmpdir)
+  porder_lib="$porder_root/skills/android-reverse-engineering/scripts/lib"
+  mkdir -p "$porder_lib"
+  porder_home=$(new_tmpdir)
+  native_porder_home=$(to_native_path "$porder_home")
+  touch "$porder_home/porder-env-target"
+
+  cat > "$porder_lib/tools.psv" <<PSV
+id|required|platform|kind|probe|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
+porder|required|all|path|porder-cli-stub-zzz|PORDER_ENV|$native_porder_home/porder-candidate|-|-|-|-|PowerShell-only env-vs-probe order test
+PSV
+
+  porder_bin=$(new_tmpdir)
+  native_porder_bin=$(to_native_path "$porder_bin")
+  cat > "$porder_bin/porder-cli-stub-zzz.cmd" <<'CMD'
+@echo off
+exit /b 0
+CMD
+
+  native_porder_root=$(to_native_path "$porder_root")
+  porder_env_native="$native_porder_home/porder-env-target"
+
+  porder_script_dir=$(new_tmpdir)
+  porder_script="$porder_script_dir/porder-check.ps1"
+  cat > "$porder_script" <<'EOF'
+$ErrorActionPreference = 'Stop'
+# Set $env:PATH from a differently-named variable, inside the script,
+# rather than passing PATH="$native_porder_bin" from bash: Git-Bash/MSYS
+# auto-converts the PATH env var specially, and a native Windows path
+# with a drive-letter colon (C:\...) gets its colon misread as a POSIX
+# PATH-list separator in that conversion, corrupting the value before
+# pwsh.exe ever sees it. STUB_BIN_DIR is not a recognized/converted name,
+# so it arrives intact and this script sets $env:PATH itself.
+$env:PATH = $env:STUB_BIN_DIR
+. $env:TOOLS_PS1_PATH
+$r = Resolve-Tool -Id 'porder'
+if ($null -eq $r) { Write-Output 'RESOLVE=<NULL>' } else { Write-Output ('RESOLVE=' + $r.Path) }
+EOF
+
+  porder_out=$(CLAUDE_PLUGIN_ROOT="$native_porder_root" TOOLS_PS1_PATH="$native_tools_ps1" \
+    PORDER_ENV="$porder_env_native" STUB_BIN_DIR="$native_porder_bin" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$porder_script" 2>&1 | tr -d '\r')
+
+  assert_contains "$porder_out" "RESOLVE=$porder_env_native" \
+    "[win] Tools.ps1 resolution order: env override wins over PATH probe when both are present"
 fi
 
 cleanup_tmpdirs

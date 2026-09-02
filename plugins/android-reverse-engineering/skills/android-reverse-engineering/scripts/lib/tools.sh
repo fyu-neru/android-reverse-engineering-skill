@@ -28,13 +28,15 @@ tool_field() {
 
   IFS= read -r header < "$psv"
   local idx=0 found=-1 col
-  local oldifs="$IFS"
+  local oldifs="$IFS" oldopts="$-"
   IFS='|'
+  set -f
   for col in $header; do
     if [ "$col" = "$want_col" ]; then found=$idx; fi
     idx=$((idx + 1))
   done
   IFS="$oldifs"
+  case "$oldopts" in *f*) ;; *) set +f ;; esac
   [ "$found" -ge 0 ] || return 1
 
   local line
@@ -45,17 +47,34 @@ tool_field() {
     esac
     local i=0 f
     oldifs="$IFS"; IFS='|'
+    oldopts="$-"
+    set -f
     for f in $line; do
-      if [ "$i" -eq "$found" ]; then IFS="$oldifs"; printf '%s\n' "$f"; return 0; fi
+      if [ "$i" -eq "$found" ]; then
+        IFS="$oldifs"
+        case "$oldopts" in *f*) ;; *) set +f ;; esac
+        printf '%s\n' "$f"; return 0
+      fi
       i=$((i + 1))
     done
     IFS="$oldifs"
+    case "$oldopts" in *f*) ;; *) set +f ;; esac
   done < "$psv"
   return 1
 }
 
 _tools_expand() {
   # Expand {HOME} in a candidate path. Deliberately not eval.
+  #
+  # NOT cross-reader tested as a raw string: bash's $HOME and
+  # PowerShell's $env:USERPROFILE are different literal strings even on
+  # the same Git-Bash-on-Windows machine (e.g. /c/Users/foo vs
+  # C:\Users\foo), so comparing the two readers' *default-derived*
+  # expansion verbatim is structurally meaningless - it would "diverge"
+  # even when both are correct. tests/test-tools-psv.sh's Group 7
+  # instead points both readers' home-directory variable at the same
+  # native directory and checks they resolve to the same file - see the
+  # matching comment on Expand-ToolHome in Tools.ps1.
   local s="$1"
   printf '%s\n' "${s//\{HOME\}/$HOME}"
 }
@@ -67,7 +86,11 @@ tool_resolve() {
   local id="$1" env_name env_val probe candidates cand
   env_name=$(tool_field "$id" env_override) || return 1
   if [ "$env_name" != "-" ]; then
-    eval "env_val=\${$env_name:-}"
+    # Indirect expansion, not eval: ${!env_name:-} looks up the variable
+    # NAMED by $env_name and defaults to empty if that variable (or
+    # env_name itself) is unset. Supported since bash 2.0, so this is
+    # bash-3.2 safe.
+    env_val=${!env_name:-}
     if [ -n "$env_val" ] && [ -f "$env_val" ]; then
       printf '%s\n' "$env_val"; return 0
     fi
@@ -75,29 +98,37 @@ tool_resolve() {
 
   probe=$(tool_field "$id" probe) || return 1
   if [ "$probe" != "-" ]; then
-    local oldifs="$IFS" p
+    local oldifs="$IFS" oldopts="$-" p
     IFS=','
+    set -f
     for p in $probe; do
       IFS="$oldifs"
       if command -v "$p" >/dev/null 2>&1; then
+        case "$oldopts" in *f*) ;; *) set +f ;; esac
         command -v "$p"; return 0
       fi
       IFS=','
     done
     IFS="$oldifs"
+    case "$oldopts" in *f*) ;; *) set +f ;; esac
   fi
 
   candidates=$(tool_field "$id" candidates) || return 1
   if [ "$candidates" != "-" ]; then
-    local oldifs="$IFS" c
+    local oldifs="$IFS" oldopts="$-" c
     IFS=';'
+    set -f
     for c in $candidates; do
       IFS="$oldifs"
       cand=$(_tools_expand "$c")
-      if [ -f "$cand" ]; then printf '%s\n' "$cand"; return 0; fi
+      if [ -f "$cand" ]; then
+        case "$oldopts" in *f*) ;; *) set +f ;; esac
+        printf '%s\n' "$cand"; return 0
+      fi
       IFS=';'
     done
     IFS="$oldifs"
+    case "$oldopts" in *f*) ;; *) set +f ;; esac
   fi
   return 1
 }
