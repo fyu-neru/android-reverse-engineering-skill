@@ -1,0 +1,3 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/check-deps.sh
+FIND:  java_version_output=$(java -version 2>&1)
+REPLACE:  java_version_output=$(java -version 2>&1 | head -1)

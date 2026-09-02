@@ -1,0 +1,3 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/find-api-calls.sh
+FIND:  h_retrofit=0; h_okhttp=0; h_ktor=0; h_apollo=0; h_volley=0
+REPLACE:  declare -A MUTATION_H=(); h_retrofit=0; h_okhttp=0; h_ktor=0; h_apollo=0; h_volley=0

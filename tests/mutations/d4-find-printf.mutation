@@ -1,0 +1,3 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh
+FIND:    done < <(find "$src_dir" -mindepth 1 -maxdepth 3 -type d | LC_ALL=C sort)
+REPLACE:    done < <(find "$src_dir" -mindepth 1 -maxdepth 3 -type d -printf '%P\n' | sort)
