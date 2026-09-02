@@ -53,24 +53,6 @@ bash_version_satisfies_lt_4_4() {
   return 1
 }
 
-# bash_running_on_windows_like — true under Git-Bash/MSYS/Cygwin. Their
-# signal delivery is cooperative rather than a real kernel-level
-# terminate-immediately: an untrapped SIGTERM there still lets bash run
-# its EXIT trap before the process ends, unlike a real POSIX kernel (Linux,
-# macOS) where an unhandled terminating signal tears the process down with
-# no further user code executed at all. A mutation whose only observable
-# effect is "does an EXIT-only trap fail to run on SIGTERM" is therefore
-# structurally unable to fail on these platforms — REQUIRES:posix-signals
-# opts a mutation out of them the same way REQUIRES:bash<4.4 opts one out
-# of bash 4.4+, rather than let it inflate the survivor count with a
-# platform limitation it never had a chance to detect.
-bash_running_on_windows_like() {
-  case "$(uname -s 2>/dev/null)" in
-    MINGW*|MSYS*|CYGWIN*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 # State for the in-flight mutation, used by the cleanup trap below so an
 # interrupt mid-mutation can never leave a plugin script permanently
 # corrupted. cleanup_mutation_state is idempotent and safe to call even
@@ -128,12 +110,6 @@ for m in "$TESTS_DIR"/mutations/*.mutation; do
     skipped=$((skipped + 1)); skipped_names="$skipped_names $name"
     continue
   fi
-  if [ "$requires" = "posix-signals" ] && bash_running_on_windows_like; then
-    echo "  skip     - $name: REQUIRES posix-signals, this is $(uname -s 2>/dev/null || echo unknown)"
-    skipped=$((skipped + 1)); skipped_names="$skipped_names $name"
-    continue
-  fi
-
   total=$((total + 1))
 
   if [ -z "$expect" ]; then
