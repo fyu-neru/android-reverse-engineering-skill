@@ -57,17 +57,29 @@ assert_not_contains "$out4" "VINEFLOWER_CLI_SHOULD_NOT_RUN" \
   "D2 parity: decompile.sh does not run the PATH CLI when FERNFLOWER_JAR_PATH is set"
 
 bin5=$(new_tmpdir)
+# The padding must reliably overflow the pipe (a few thousand small,
+# individually-echoed lines was not: on some platforms/timings the whole
+# loop finished, and the OS pipe buffer absorbed it, before a `head -1`
+# reader would ever have closed its end — so a `| head -1` regression
+# could sit there unnoticed with this assertion still green. Doubling a
+# line 16 times builds ~4MB in one write, an order of magnitude past any
+# real pipe buffer (typically 16KB-1MB), so a blocked writer racing a
+# closed reader is no longer a timing coincidence.
 make_stub_bin "$bin5" java 'echo "openjdk version \"17.0.9\" 2023-10-17" >&2
+line="padding line to overflow the pipe buffer after the version line"
+big="$line"
 i=0
-while [ "$i" -lt 5000 ]; do
-  echo "padding line $i to overflow the pipe buffer after the version line" >&2
+while [ "$i" -lt 16 ]; do
+  big="$big
+$big"
   i=$((i + 1))
 done
+printf "%s\n" "$big" >&2
 exit 0'
 
 out5=$(PATH="$bin5:$PATH" "${BASH:-bash}" "$SCRIPT" 2>&1)
 assert_contains "$out5" "[OK] Java 17 detected" \
-  "SIGPIPE regression: check-deps.sh must not abort when java prints thousands of lines after the version line (head -1 | SIGPIPE race)"
+  "SIGPIPE regression: check-deps.sh must not abort when java prints megabytes after the version line (head -1 | SIGPIPE race)"
 
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
