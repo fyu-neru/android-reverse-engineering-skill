@@ -1,6 +1,6 @@
 {
   "name": "android-reverse-engineering",
-  "version": "1.5.2",
+  "version": "2.0.0",
   "description": "Decompile Android APK/JAR/AAR with jadx, trace call flows through libraries, and document extracted APIs.",
   "author": {
     "name": "Simone Avogadro"
