@@ -97,7 +97,7 @@ foreach ($depId in (Get-ToolList -Want 'required')) {
 foreach ($depId in (Get-ToolList -Want 'optional')) {
     switch ($depId) {
         'vineflower' {
-            # --- Fernflower / Vineflower ---
+            # --- Vineflower ---
             # Resolve-Tool owns the resolution order (env override -> PATH
             # probe -> candidate paths); this block only figures out WHICH
             # of those three kinds of match Resolve-Tool made, so each kind
@@ -126,10 +126,10 @@ foreach ($depId in (Get-ToolList -Want 'optional')) {
                 if ($ffMatchedProbe) {
                     Write-Host "[OK] $ffMatchedProbe CLI detected"
                 } else {
-                    Write-Host "[OK] Fernflower/Vineflower JAR found: $ffPath"
+                    Write-Host "[OK] Vineflower JAR found: $ffPath"
                 }
             } else {
-                Write-Host "[MISSING] Fernflower/Vineflower not found (optional - $ffPurpose)"
+                Write-Host "[MISSING] Vineflower not found (optional - $ffPurpose)"
                 $missingOptional += "vineflower"
             }
         }

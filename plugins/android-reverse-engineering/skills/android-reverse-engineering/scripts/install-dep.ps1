@@ -23,6 +23,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Ensure Write-Host output round-trips correctly when this script's stdout
+# is redirected to a file rather than a real console: the 'fernflower'
+# dependency-name migration message below contains non-ASCII text, and
+# some Windows console code pages otherwise re-encode it lossily.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 . (Join-Path $PSScriptRoot 'lib/Tools.ps1')
 
 function Show-Usage {
@@ -34,7 +40,7 @@ Install a dependency required for Android reverse engineering.
 Available dependencies:
   java         Java JDK 17+
   jadx         jadx decompiler
-  vineflower   Vineflower (Fernflower fork) decompiler
+  vineflower   Vineflower decompiler
   adb          Android Debug Bridge
 
 The script detects available package managers (winget, scoop, choco), then:
@@ -298,11 +304,11 @@ function Install-Jadx {
 
 function Install-Vineflower {
     # Candidate paths, the probe list (vineflower, fernflower) and the
-    # FERNFLOWER_JAR_PATH env override all come from tools.psv via
+    # VINEFLOWER_JAR env override all come from tools.psv via
     # Resolve-Tool, not a separately-maintained candidate list.
     $resolved = Resolve-Tool -Id 'vineflower'
     if ($resolved) {
-        Write-Ok "Vineflower/Fernflower already available: $($resolved.Path)"
+        Write-Ok "Vineflower already available: $($resolved.Path)"
         return
     }
 
@@ -326,11 +332,21 @@ function Install-Vineflower {
     Set-Content -Path $wrapperPath -Value "@echo off`r`njava -jar `"$installDir\vineflower.jar`" %*"
 
     Add-ToUserPath $localBin
-    [Environment]::SetEnvironmentVariable('FERNFLOWER_JAR_PATH', "$installDir\vineflower.jar", 'User')
-    $env:FERNFLOWER_JAR_PATH = "$installDir\vineflower.jar"
+
+    # A pre-2.0.0 install may have left the old FERNFLOWER_JAR_PATH user
+    # environment variable set. Nothing reads it any more (env_override in
+    # tools.psv was renamed alongside it), so leaving it in place is a
+    # dead, confusing duplicate of the live VINEFLOWER_JAR set right below.
+    $staleVar = [Environment]::GetEnvironmentVariable('FERNFLOWER_JAR_PATH', 'User')
+    if ($staleVar) {
+        Write-Info "Warning: the user environment variable FERNFLOWER_JAR_PATH is still set ($staleVar), which is no longer read (renamed to VINEFLOWER_JAR in 2.0.0). Remove it to avoid a stale, confusing export."
+    }
+
+    [Environment]::SetEnvironmentVariable('VINEFLOWER_JAR', "$installDir\vineflower.jar", 'User')
+    $env:VINEFLOWER_JAR = "$installDir\vineflower.jar"
 
     Write-Ok "Vineflower $version installed to $installDir\vineflower.jar"
-    Write-Info "FERNFLOWER_JAR_PATH set to $installDir\vineflower.jar"
+    Write-Info "VINEFLOWER_JAR set to $installDir\vineflower.jar"
 }
 
 function Install-Adb {
@@ -368,7 +384,10 @@ switch ($Dep) {
     'java'        { Install-Java }
     'jadx'        { Install-Jadx }
     'vineflower'  { Install-Vineflower }
-    'fernflower'  { Install-Vineflower }
+    'fernflower'  {
+        Write-Host "Error: 'fernflower' 已於 2.0.0 更名為 'vineflower' (install-dep.ps1 vineflower)" -ForegroundColor Red
+        exit 1
+    }
     'adb'         { Install-Adb }
     default {
         Write-Host "Error: Unknown dependency '$Dep'" -ForegroundColor Red

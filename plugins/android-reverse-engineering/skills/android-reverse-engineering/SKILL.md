@@ -1,15 +1,15 @@
 ---
-description: Decompile Android APK, XAPK, JAR, and AAR files using jadx or Fernflower/Vineflower. Reverse engineer Android apps, extract HTTP API endpoints (Retrofit, OkHttp, Volley), and trace call flows from UI to network layer. Use when the user wants to decompile, analyze, or reverse engineer Android packages, find API endpoints, or follow call flows. 中文触发词：反编译APK、安卓逆向、提取API、分析安卓应用、反编译安卓、逆向工程、追踪调用链、提取接口
+description: Decompile Android APK, XAPK, JAR, and AAR files using jadx or Vineflower. Reverse engineer Android apps, extract HTTP API endpoints (Retrofit, OkHttp, Volley), and trace call flows from UI to network layer. Use when the user wants to decompile, analyze, or reverse engineer Android packages, find API endpoints, or follow call flows. 中文触发词：反编译APK、安卓逆向、提取API、分析安卓应用、反编译安卓、逆向工程、追踪调用链、提取接口
 trigger: decompile APK|decompile XAPK|reverse engineer Android|extract API|analyze Android|jadx|fernflower|vineflower|follow call flow|decompile JAR|decompile AAR|Android reverse engineering|find API endpoints|反编译APK|安卓逆向|提取API|分析安卓应用
 ---
 
 # Android Reverse Engineering
 
-Decompile Android APK, XAPK, JAR, and AAR files using jadx and Fernflower/Vineflower, trace call flows through application code and libraries, and produce structured documentation of extracted APIs. Two decompiler engines are supported — jadx for broad Android coverage and Fernflower for higher-quality output on complex Java code — and can be used together for comparison.
+Decompile Android APK, XAPK, JAR, and AAR files using jadx and Vineflower, trace call flows through application code and libraries, and produce structured documentation of extracted APIs. Two decompiler engines are supported — jadx for broad Android coverage and Vineflower for higher-quality output on complex Java code — and can be used together for comparison.
 
 ## Prerequisites
 
-This skill requires **Java JDK 17+** and **jadx** to be installed. **Fernflower/Vineflower** is optional but recommended for higher-quality output on JAR/AAR/class files. Run the dependency checker to verify:
+This skill requires **Java JDK 17+** and **jadx** to be installed. **Vineflower** is optional but recommended for higher-quality output on JAR/AAR/class files. Run the dependency checker to verify:
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/check-deps.sh
@@ -92,7 +92,7 @@ After installation, re-run `check-deps.sh` to confirm everything is in place. Do
 
 ### Phase 2: Decompile
 
-Use the decompile wrapper script to process the target file. The script supports three engines: `jadx`, `fernflower`, and `both`.
+Use the decompile wrapper script to process the target file. The script supports three engines: `jadx`, `vineflower`, and `both`.
 
 **Action**: Choose the engine and run the decompile script. The script handles APK, XAPK, APKM, APKS, AAB, DEX, ZIP, JAR, AAR, and class files.
 
@@ -118,23 +118,23 @@ Options:
 - `-o <dir>` — Custom output directory (default: `<filename>-decompiled`)
 - `--deobf` — Enable deobfuscation (recommended for obfuscated apps)
 - `--no-res` — Skip resources, decompile code only (faster)
-- `--engine ENGINE` — `jadx` (default), `fernflower`, or `both`
+- `--engine ENGINE` — `jadx` (default), `vineflower`, or `both`
 
 **Engine selection strategy**:
 
 | Situation | Engine |
 |---|---|
 | Any APK, XAPK, APKM, APKS, AAB, DEX, or ZIP | `jadx` (the only engine that reads these) |
-| JAR/AAR/class library analysis | `fernflower` (better Java output) |
+| JAR/AAR/class library analysis | `vineflower` (better Java output) |
 | jadx output has warnings/broken code | `both` (JAR/AAR/class only — see below) |
-| Complex lambdas, generics, streams (JAR/AAR/class) | `fernflower` |
+| Complex lambdas, generics, streams (JAR/AAR/class) | `vineflower` |
 | Quick overview of a large APK | `jadx --no-res` |
 
-**The `fernflower`/`both` engines only accept `.jar`, `.aar`, and `.class` input.** dex2jar has been removed from this plugin entirely (2.0.0) — converting DEX to JVM bytecode first threw away exactly the metadata (lambdas, generic signatures, records, switch-on-string) that made Fernflower/Vineflower worth running, and jadx reads DEX directly and produces better results. Running `--engine fernflower` or `--engine both` against an APK/XAPK/DEX/ZIP-family file is refused with an explanatory error instead of attempting a conversion. Use `--engine jadx` for those.
+**The `vineflower`/`both` engines only accept `.jar`, `.aar`, and `.class` input.** dex2jar has been removed from this plugin entirely (2.0.0) — converting DEX to JVM bytecode first threw away exactly the metadata (lambdas, generic signatures, records, switch-on-string) that made Vineflower worth running, and jadx reads DEX directly and produces better results. Running `--engine vineflower` or `--engine both` against an APK/XAPK/DEX/ZIP-family file is refused with an explanatory error instead of attempting a conversion. Use `--engine jadx` for those.
 
-When using `--engine both` on a `.jar`/`.aar`/`.class` file, the outputs go into `<output>/jadx/` and `<output>/fernflower/` respectively, with a comparison summary at the end showing file counts and jadx warning counts. Review classes with jadx warnings in the Fernflower output for better code.
+When using `--engine both` on a `.jar`/`.aar`/`.class` file, the outputs go into `<output>/jadx/` and `<output>/vineflower/` respectively, with a comparison summary at the end showing file counts and jadx warning counts. Review classes with jadx warnings in the Vineflower output for better code.
 
-See `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/jadx-usage.md` and `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/fernflower-usage.md` for the full CLI references.
+See `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/jadx-usage.md` and `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/vineflower-usage.md` for the full CLI references.
 
 ### Phase 3: Analyze Structure
 
@@ -312,8 +312,8 @@ At the end of the workflow, deliver:
 
 ## References
 
-- `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/setup-guide.md` — Installing Java, jadx, Fernflower/Vineflower, and optional tools
+- `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/setup-guide.md` — Installing Java, jadx, Vineflower, and optional tools
 - `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/jadx-usage.md` — jadx CLI options and workflows
-- `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/fernflower-usage.md` — Fernflower/Vineflower CLI options, when to use, APK workflow
+- `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/vineflower-usage.md` — Vineflower CLI options, when to use, APK workflow
 - `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/api-extraction-patterns.md` — Library-specific search patterns and documentation template
 - `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/references/call-flow-analysis.md` — Techniques for tracing call flows in decompiled code

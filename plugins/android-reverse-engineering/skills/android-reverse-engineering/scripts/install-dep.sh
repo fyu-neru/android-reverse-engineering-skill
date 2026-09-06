@@ -32,7 +32,7 @@ Install a dependency required for Android reverse engineering.
 Available dependencies:
   java         Java JDK 17+
   jadx         jadx decompiler
-  vineflower   Vineflower (Fernflower fork) decompiler
+  vineflower   Vineflower decompiler
   adb          Android Debug Bridge
 
 The script detects your OS and package manager, then:
@@ -337,6 +337,21 @@ add_to_profile() {
   fi
 }
 
+# --- Helper: warn about a pre-2.0.0 env var name left behind in a shell
+# profile. Nothing reads $old_name any more (env_override in tools.psv was
+# renamed alongside it), so an existing user's profile keeps a dead export
+# while add_to_profile is about to add a second, live one right next to
+# it — this makes that stale line visible instead of leaving two exports
+# for the same purpose sitting side by side unexplained.
+warn_stale_profile_var() {
+  local old_name="$1" profile
+  for profile in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
+    if [[ -f "$profile" ]] && grep -qF "$old_name" "$profile" 2>/dev/null; then
+      info "Warning: $profile still exports $old_name, which is no longer read (renamed in 2.0.0). Remove that line to avoid a stale, confusing export."
+    fi
+  done
+}
+
 # =====================================================================
 # Dependency installers
 # =====================================================================
@@ -427,11 +442,11 @@ install_jadx() {
 
 install_vineflower() {
   # Check if already available. Candidate paths, the probe list (vineflower,
-  # fernflower) and the FERNFLOWER_JAR_PATH env override all come from
+  # fernflower) and the VINEFLOWER_JAR env override all come from
   # tools.psv via tool_resolve, not a separately-maintained candidate list.
   local resolved
   if resolved=$(tool_resolve vineflower); then
-    ok "Vineflower/Fernflower already available: $resolved"
+    ok "Vineflower already available: $resolved"
     return 0
   fi
 
@@ -468,12 +483,13 @@ WRAPPER
   chmod +x "$HOME/.local/bin/vineflower"
 
   export PATH="$HOME/.local/bin:$PATH"
-  export FERNFLOWER_JAR_PATH="$install_dir/vineflower.jar"
+  export VINEFLOWER_JAR="$install_dir/vineflower.jar"
   add_to_profile 'export PATH="$HOME/.local/bin:$PATH"'
-  add_to_profile "export FERNFLOWER_JAR_PATH=\"$install_dir/vineflower.jar\""
+  warn_stale_profile_var "FERNFLOWER_JAR_PATH"
+  add_to_profile "export VINEFLOWER_JAR=\"$install_dir/vineflower.jar\""
 
   ok "Vineflower $version installed to $install_dir/vineflower.jar"
-  info "FERNFLOWER_JAR_PATH set to $install_dir/vineflower.jar"
+  info "VINEFLOWER_JAR set to $install_dir/vineflower.jar"
 }
 
 install_adb() {
@@ -505,7 +521,11 @@ install_adb() {
 case "$DEP" in
   java)        install_java ;;
   jadx)        install_jadx ;;
-  vineflower|fernflower)  install_vineflower ;;
+  vineflower)  install_vineflower ;;
+  fernflower)
+    echo "Error: 'fernflower' 已於 2.0.0 更名為 'vineflower'（install-dep.sh vineflower）" >&2
+    exit 1
+    ;;
   adb)         install_adb ;;
   *)
     echo "Error: Unknown dependency '$DEP'" >&2

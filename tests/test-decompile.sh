@@ -47,7 +47,7 @@ work=$(new_tmpdir)
 touch "$work/lib.jar"
 
 out=$(cd "$work" && HOME="$home" PATH="$bin:$PATH" \
-      env -u FERNFLOWER_JAR_PATH "${BASH:-bash}" "$SCRIPT" --engine fernflower lib.jar 2>&1)
+      env -u FERNFLOWER_JAR_PATH -u VINEFLOWER_JAR "${BASH:-bash}" "$SCRIPT" --engine vineflower lib.jar 2>&1)
 
 assert_contains "$out" "$home/.local/share/vineflower/vineflower.jar" \
   "D2: decompile finds the jar installed by install-dep.sh"
@@ -64,7 +64,7 @@ work2=$(new_tmpdir)
 touch "$work2/lib.jar"
 
 out2=$(cd "$work2" && HOME="$home2" PATH="$bin2:$PATH" \
-       env -u FERNFLOWER_JAR_PATH "${BASH:-bash}" "$SCRIPT" --engine fernflower lib.jar 2>&1)
+       env -u FERNFLOWER_JAR_PATH -u VINEFLOWER_JAR "${BASH:-bash}" "$SCRIPT" --engine vineflower lib.jar 2>&1)
 
 assert_contains "$out2" "VINEFLOWER_CLI_ARGV" \
   "D2: decompile uses a vineflower CLI found on PATH"
@@ -81,21 +81,21 @@ assert_not_contains "$out2" "JAVA_SHOULD_NOT_RUN" \
 # targeted the same trap — rather than left in place where it could only
 # ever pass trivially.
 
-# --- D5: the fernflower/vineflower engine must refuse non-JVM-bytecode
-# input now that dex2jar has been removed, rather than silently doing
-# nothing useful or crashing deeper in the pipeline. ---
+# --- D5: the vineflower engine must refuse non-JVM-bytecode input now
+# that dex2jar has been removed, rather than silently doing nothing
+# useful or crashing deeper in the pipeline. ---
 work5=$(new_tmpdir)
 touch "$work5/app.apk"
 
-out5=$(cd "$work5" && "${BASH:-bash}" "$SCRIPT" --engine fernflower app.apk 2>&1)
+out5=$(cd "$work5" && "${BASH:-bash}" "$SCRIPT" --engine vineflower app.apk 2>&1)
 status5=$?
 
 assert_equals "$status5" "1" \
-  "[all] D5: --engine fernflower on a .apk exits non-zero (dex2jar removed, no DEX support)"
+  "[all] D5: --engine vineflower on a .apk exits non-zero (dex2jar removed, no DEX support)"
 assert_contains "$out5" "only decompiles .jar, .aar, and .class" \
-  "[all] D5: --engine fernflower refusal names the accepted extensions"
+  "[all] D5: --engine vineflower refusal names the accepted extensions"
 assert_contains "$out5" "dex2jar conversion has been removed" \
-  "[all] D5: --engine fernflower refusal explains WHY .apk is rejected (not just that it is)"
+  "[all] D5: --engine vineflower refusal explains WHY .apk is rejected (not just that it is)"
 
 # --- D6: print_structure must not let an obfuscated APK's dozens of
 # single-letter package directories crowd out a real package name like
@@ -225,8 +225,8 @@ assert_contains "$out10" "JADX_CANDIDATE_ARGV" \
   "[all] D10: decompile finds jadx via a tools.psv candidate path when nothing is on PATH"
 
 # --- D12 (review round 1, minor): --engine both must also refuse a .apk
-# (via its fernflower pass), not just --engine fernflower alone. jadx's
-# pass runs and succeeds first; the fernflower pass then hits the same
+# (via its vineflower pass), not just --engine vineflower alone. jadx's
+# pass runs and succeeds first; the vineflower pass then hits the same
 # extension guard as D5 and the whole run fails. ---
 work12=$(new_tmpdir)
 bin12=$(new_tmpdir)
@@ -245,14 +245,47 @@ out12=$(cd "$work12" && PATH="$bin12:$PATH" "${BASH:-bash}" "$SCRIPT" --engine b
 status12=$?
 
 assert_equals "$status12" "1" \
-  "[all] D12: --engine both on a .apk exits non-zero (fernflower pass refuses)"
+  "[all] D12: --engine both on a .apk exits non-zero (vineflower pass refuses)"
 assert_contains "$out12" "only decompiles .jar, .aar, and .class" \
-  "[all] D12: --engine both's fernflower pass names the accepted extensions when it refuses"
+  "[all] D12: --engine both's vineflower pass names the accepted extensions when it refuses"
 
-# --- D11 (review round 1, C1): decompile.ps1's --Engine fernflower
+# --- D15 (Task 8): --engine fernflower is a renamed value, not one
+# decompile.sh still accepts. It must print a migration hint the user can
+# act on and refuse to run — this is not a compatibility shim, it never
+# falls through to running the vineflower engine under the old name. ---
+work15=$(new_tmpdir)
+touch "$work15/lib.jar"
+out15=$(cd "$work15" && env -u FERNFLOWER_JAR_PATH -u VINEFLOWER_JAR \
+        "${BASH:-bash}" "$SCRIPT" --engine fernflower lib.jar 2>&1)
+status15=$?
+
+assert_equals "$status15" "1" \
+  "[all] D15: --engine fernflower exits non-zero (renamed to --engine vineflower in 2.0.0)"
+assert_contains "$out15" "--engine fernflower 已於 2.0.0 更名為 --engine vineflower" \
+  "[all] D15: --engine fernflower prints the exact migration hint"
+
+# --- D16 (Task 8): a stale FERNFLOWER_JAR_PATH left in the environment
+# must be caught with the same migration hint, not silently ignored —
+# silently ignoring it would leave decompile.sh falling back to whatever
+# vineflower.jar the PATH/candidate probe happens to find instead of the
+# jar the user meant, with no indication anything was skipped. Deliberately
+# uses the default (jadx) engine to prove the check fires regardless of
+# --engine, not just when vineflower is actually selected. ---
+work16=$(new_tmpdir)
+touch "$work16/lib.jar"
+out16=$(cd "$work16" && env -u VINEFLOWER_JAR FERNFLOWER_JAR_PATH="/nonexistent/whatever.jar" \
+        "${BASH:-bash}" "$SCRIPT" lib.jar 2>&1)
+status16=$?
+
+assert_equals "$status16" "1" \
+  "[all] D16: a set FERNFLOWER_JAR_PATH exits non-zero (renamed to VINEFLOWER_JAR in 2.0.0)"
+assert_contains "$out16" "FERNFLOWER_JAR_PATH 已於 2.0.0 更名為 VINEFLOWER_JAR" \
+  "[all] D16: a set FERNFLOWER_JAR_PATH prints the exact migration hint"
+
+# --- D11 (review round 1, C1): decompile.ps1's -Engine vineflower
 # refusal must exit non-zero, not announce failure and then print a
 # success banner. Found by actually running it: Invoke-DecompileSingle
-# used to discard Invoke-Fernflower's boolean return value as a bare
+# used to discard Invoke-Vineflower's boolean return value as a bare
 # statement, so the refusal's $false never reached the script's exit
 # code and execution fell through to "=== Decompilation complete ===".
 # Only runs where pwsh/powershell exists.
@@ -277,14 +310,14 @@ else
   fi
 
   "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1" \
-    -Engine fernflower "$native_work11\app.apk" >"$work11/ps-out.txt" 2>&1
+    -Engine vineflower "$native_work11\app.apk" >"$work11/ps-out.txt" 2>&1
   ps11_status=$?
   ps11_out=$(cat "$work11/ps-out.txt")
 
   assert_equals "$ps11_status" "1" \
-    "[win] D11: decompile.ps1 --Engine fernflower on a .apk exits non-zero"
+    "[win] D11: decompile.ps1 -Engine vineflower on a .apk exits non-zero"
   assert_not_contains "$ps11_out" "=== Decompilation complete ===" \
-    "[win] D11: decompile.ps1 does not print the success banner after the fernflower refusal"
+    "[win] D11: decompile.ps1 does not print the success banner after the vineflower refusal"
 
   # --- D13 (review round 1, C2): decompile.ps1's print_structure
   # crowding-out fix must actually work with a RELATIVE output directory,
@@ -397,6 +430,51 @@ BAT
 
   assert_contains "$out14" "JADX_PS_CANDIDATE_RAN" \
     "[win] D14: decompile.ps1 finds jadx via a tools.psv candidate path (USERPROFILE) when nothing is on PATH"
+
+  # --- D17 (Task 8): decompile.ps1's -Engine fernflower must print the
+  # same migration hint as bash D15 and exit non-zero, not fall through to
+  # the generic "Unknown engine" message or (worse) still work under the
+  # old name.
+  work17=$(new_tmpdir)
+  touch "$work17/lib.jar"
+  native_work17="$work17"
+  native_ps1_17="$SCRIPT_DIR/decompile.ps1"
+  if command -v cygpath >/dev/null 2>&1; then
+    native_work17=$(cygpath -w "$work17")
+    native_ps1_17=$(cygpath -w "$SCRIPT_DIR/decompile.ps1")
+  fi
+
+  env -u FERNFLOWER_JAR_PATH -u VINEFLOWER_JAR "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_17" \
+    -Engine fernflower "$native_work17\lib.jar" >"$work17/ps-out.txt" 2>&1
+  ps17_status=$?
+  ps17_out=$(cat "$work17/ps-out.txt")
+
+  assert_equals "$ps17_status" "1" \
+    "[win] D17: decompile.ps1 -Engine fernflower exits non-zero (renamed to -Engine vineflower in 2.0.0)"
+  assert_contains "$ps17_out" "--engine fernflower 已於 2.0.0 更名為 --engine vineflower" \
+    "[win] D17: decompile.ps1 -Engine fernflower prints the exact migration hint"
+
+  # --- D18 (Task 8): a stale FERNFLOWER_JAR_PATH in the environment must
+  # be caught the same way on the PowerShell side, regardless of -Engine.
+  work18=$(new_tmpdir)
+  touch "$work18/lib.jar"
+  native_work18="$work18"
+  native_ps1_18="$SCRIPT_DIR/decompile.ps1"
+  if command -v cygpath >/dev/null 2>&1; then
+    native_work18=$(cygpath -w "$work18")
+    native_ps1_18=$(cygpath -w "$SCRIPT_DIR/decompile.ps1")
+  fi
+
+  env -u VINEFLOWER_JAR FERNFLOWER_JAR_PATH="C:\nonexistent\whatever.jar" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_18" "$native_work18\lib.jar" \
+    >"$work18/ps-out.txt" 2>&1
+  ps18_status=$?
+  ps18_out=$(cat "$work18/ps-out.txt")
+
+  assert_equals "$ps18_status" "1" \
+    "[win] D18: decompile.ps1 exits non-zero when FERNFLOWER_JAR_PATH is set (renamed to VINEFLOWER_JAR in 2.0.0)"
+  assert_contains "$ps18_out" "FERNFLOWER_JAR_PATH 已於 2.0.0 更名為 VINEFLOWER_JAR" \
+    "[win] D18: decompile.ps1 prints the exact migration hint when FERNFLOWER_JAR_PATH is set"
 fi
 
 cleanup_tmpdirs

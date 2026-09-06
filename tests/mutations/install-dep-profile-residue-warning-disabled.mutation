@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/install-dep.sh
+FIND:  warn_stale_profile_var "FERNFLOWER_JAR_PATH"
+REPLACE:  : # warn_stale_profile_var "FERNFLOWER_JAR_PATH" (mutated out)
+EXPECT:install-dep.sh vineflower warns when the profile still exports the old FERNFLOWER_JAR_PATH name

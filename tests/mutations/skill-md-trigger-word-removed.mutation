@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/SKILL.md
+FIND:trigger: decompile APK|decompile XAPK|reverse engineer Android|extract API|analyze Android|jadx|fernflower|vineflower|follow call flow|decompile JAR|decompile AAR|Android reverse engineering|find API endpoints|反编译APK|安卓逆向|提取API|分析安卓应用
+REPLACE:trigger: decompile APK|decompile XAPK|reverse engineer Android|extract API|analyze Android|jadx|vineflower|follow call flow|decompile JAR|decompile AAR|Android reverse engineering|find API endpoints|反编译APK|安卓逆向|提取API|分析安卓应用
+EXPECT:SKILL.md contains the word fernflower (case-insensitive) exactly once

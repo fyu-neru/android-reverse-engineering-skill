@@ -96,9 +96,9 @@ jadx --version
 
 ---
 
-## Fernflower / Vineflower (optional, recommended)
+## Vineflower (optional, recommended)
 
-Fernflower is the JetBrains Java decompiler. It produces better output than jadx on complex Java constructs, lambdas, and generics. [Vineflower](https://github.com/Vineflower/vineflower) is the actively maintained community fork with published releases — prefer it over upstream Fernflower.
+[Vineflower](https://github.com/Vineflower/vineflower) is an actively maintained Java decompiler with published releases. It produces better output than jadx on complex Java constructs, lambdas, and generics.
 
 ### Option 1: Vineflower from GitHub Releases (recommended)
 
@@ -109,18 +109,18 @@ Fernflower is the JetBrains Java decompiler. It produces better output than jadx
 ```bash
 mkdir -p ~/vineflower
 mv vineflower-*.jar ~/vineflower/vineflower.jar
-export FERNFLOWER_JAR_PATH="$HOME/vineflower/vineflower.jar"
+export VINEFLOWER_JAR="$HOME/vineflower/vineflower.jar"
 # Add the export to ~/.bashrc or ~/.zshrc for persistence
 ```
 
-### Option 2: Build Fernflower from source
+### Option 2: Build Vineflower from source
 
 ```bash
-git clone https://github.com/JetBrains/fernflower.git
-cd fernflower
-./gradlew jar
-# Produces: build/libs/fernflower.jar
-export FERNFLOWER_JAR_PATH="$(pwd)/build/libs/fernflower.jar"
+git clone https://github.com/Vineflower/vineflower.git
+cd vineflower
+./gradlew build
+# Produces: build/libs/vineflower-<version>.jar
+export VINEFLOWER_JAR="$(pwd)/build/libs/vineflower-<version>.jar"
 ```
 
 ### Option 3: Homebrew (Vineflower)
@@ -132,10 +132,10 @@ brew install vineflower
 ### Verify
 
 ```bash
-java -jar "$FERNFLOWER_JAR_PATH" --version
+java -jar "$VINEFLOWER_JAR" --version
 ```
 
-> **Note**: Vineflower/Fernflower only works on JVM bytecode (JAR, class files) — it cannot read an APK or a raw `.dex` directly. To point it at an APK, convert with **dex2jar** first (see below); this is a manual step, not something `install-dep.sh`/`check-deps.sh` set up for you.
+> **Note**: Vineflower only works on JVM bytecode (JAR, class files) — it cannot read an APK or a raw `.dex` directly. To point it at an APK, convert with **dex2jar** first (see below); this is a manual step, not something `install-dep.sh`/`check-deps.sh` set up for you.
 
 ---
 
@@ -168,7 +168,7 @@ ls app-resources/res/layout/
 
 ### dex2jar — when you want Vineflower to read an APK
 
-**Trigger:** Vineflower (and upstream Fernflower) decompile JVM bytecode (`.jar`/`.class`) only — jadx is the default decompiler precisely because it reads DEX/APK directly. Reach for dex2jar only when you specifically want Vineflower's output (it is often cleaner on complex generics, lambdas, and switch-expressions) and the input is DEX-based.
+**Trigger:** Vineflower decompiles JVM bytecode (`.jar`/`.class`) only — jadx is the default decompiler precisely because it reads DEX/APK directly. Reach for dex2jar only when you specifically want Vineflower's output (it is often cleaner on complex generics, lambdas, and switch-expressions) and the input is DEX-based.
 
 ### GitHub Releases
 
@@ -265,6 +265,6 @@ adb pull /data/app/com.example.app-xxxx/base.apk ./app.apk
 | `Error: Could not find or load main class` | Java is missing or wrong version — verify with `java -version` |
 | jadx runs out of memory on large APKs | Increase heap: `jadx -Xmx4g -d output app.apk` or set `JAVA_OPTS="-Xmx4g"` |
 | Decompiled code has many `// Error` comments | Try `--show-bad-code` to see partial output, or use `--deobf` for obfuscated apps |
-| Fernflower hangs on a method | Use `-mpm=60` to set a 60-second timeout per method |
-| Fernflower JAR not found | Set `FERNFLOWER_JAR_PATH` env variable to the full path of the JAR |
+| Vineflower hangs on a method | Use `-mpm=60` to set a 60-second timeout per method |
+| Vineflower JAR not found | Set `VINEFLOWER_JAR` env variable to the full path of the JAR |
 | dex2jar fails with `ZipException` | The APK may have a non-standard ZIP structure — try `jadx` instead |

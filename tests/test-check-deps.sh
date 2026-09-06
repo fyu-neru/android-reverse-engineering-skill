@@ -29,7 +29,7 @@ out2=$(PATH="$bin2:$PATH" "${BASH:-bash}" "$SCRIPT" 2>&1)
 assert_contains "$out2" "[OK] Java 17 detected" \
   "D4: parses a dotted Java version"
 
-# --- D2 parity: FERNFLOWER_JAR_PATH must win over a CLI on PATH in BOTH
+# --- D2 parity: VINEFLOWER_JAR must win over a CLI on PATH in BOTH
 #     check-deps.sh and decompile.sh — a divergence here means the two
 #     scripts can disagree about which backend is in effect. ---
 home3=$(new_tmpdir)
@@ -42,19 +42,19 @@ exit 1'
 make_stub_bin "$bin3" java 'echo "JAVA_ARGV: $*"
 exit 0'
 
-out3=$(HOME="$home3" PATH="$bin3:$PATH" FERNFLOWER_JAR_PATH="$jarpath" "${BASH:-bash}" "$SCRIPT" 2>&1)
-assert_contains "$out3" "[OK] Fernflower/Vineflower JAR found: $jarpath" \
-  "D2 parity: check-deps.sh prefers FERNFLOWER_JAR_PATH over a CLI on PATH"
+out3=$(HOME="$home3" PATH="$bin3:$PATH" VINEFLOWER_JAR="$jarpath" "${BASH:-bash}" "$SCRIPT" 2>&1)
+assert_contains "$out3" "[OK] Vineflower JAR found: $jarpath" \
+  "D2 parity: check-deps.sh prefers VINEFLOWER_JAR over a CLI on PATH"
 
 work3=$(new_tmpdir)
 touch "$work3/lib.jar"
-out4=$(cd "$work3" && HOME="$home3" PATH="$bin3:$PATH" FERNFLOWER_JAR_PATH="$jarpath" \
-       "${BASH:-bash}" "$DECOMPILE_SCRIPT" --engine fernflower lib.jar 2>&1)
+out4=$(cd "$work3" && HOME="$home3" PATH="$bin3:$PATH" VINEFLOWER_JAR="$jarpath" \
+       "${BASH:-bash}" "$DECOMPILE_SCRIPT" --engine vineflower lib.jar 2>&1)
 
 assert_contains "$out4" "$jarpath" \
-  "D2 parity: decompile.sh uses the same FERNFLOWER_JAR_PATH jar as check-deps.sh"
+  "D2 parity: decompile.sh uses the same VINEFLOWER_JAR jar as check-deps.sh"
 assert_not_contains "$out4" "VINEFLOWER_CLI_SHOULD_NOT_RUN" \
-  "D2 parity: decompile.sh does not run the PATH CLI when FERNFLOWER_JAR_PATH is set"
+  "D2 parity: decompile.sh does not run the PATH CLI when VINEFLOWER_JAR is set"
 
 bin5=$(new_tmpdir)
 # Overflowing the pipe buffer by sheer volume was tried first and was

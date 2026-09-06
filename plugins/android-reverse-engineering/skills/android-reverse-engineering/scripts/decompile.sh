@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# decompile.sh — Decompile APK/XAPK/APKM/APKS/AAB/DEX/ZIP/JAR/AAR/CLASS using jadx, fernflower, or both
+# decompile.sh — Decompile APK/XAPK/APKM/APKS/AAB/DEX/ZIP/JAR/AAR/CLASS using jadx, vineflower, or both
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,29 +20,29 @@ Options:
   -o, --output DIR  Output directory (default: <filename>-decompiled)
   --deobf           Enable deobfuscation of names
   --no-res          Skip resource decoding (faster, code-only)
-  --engine ENGINE   Decompiler engine: jadx, fernflower, or both (default: jadx)
+  --engine ENGINE   Decompiler engine: jadx, vineflower, or both (default: jadx)
   -h, --help        Show this help message
 
 Engines:
   jadx        Use jadx (default). Handles APK/XAPK/APKM/APKS/AAB/DEX/ZIP/JAR/AAR
               natively (including split bundles) and decodes resources.
-  fernflower  Use Fernflower/Vineflower. Better on complex Java, lambdas, generics.
+  vineflower  Use Vineflower. Better on complex Java, lambdas, generics.
               Only accepts .jar, .aar, and .class input — it decompiles JVM
               bytecode, not DEX, and dex2jar is no longer part of this pipeline
               (see the design doc for why). Use --engine jadx for anything else.
   both        Run both decompilers side by side for comparison.
               jadx output  → <output>/jadx/
-              fernflower   → <output>/fernflower/
-              (requires a .jar, .aar, or .class input, same as --engine fernflower)
+              vineflower   → <output>/vineflower/
+              (requires a .jar, .aar, or .class input, same as --engine vineflower)
 
 Environment:
-  FERNFLOWER_JAR_PATH   Path to fernflower.jar or vineflower.jar
+  VINEFLOWER_JAR   Path to vineflower.jar
 
 Examples:
   decompile.sh app-release.apk
   decompile.sh app-bundle.xapk
   decompile.sh --engine both --deobf library.jar
-  decompile.sh --engine fernflower library.jar
+  decompile.sh --engine vineflower library.jar
 EOF
   exit 0
 }
@@ -66,6 +66,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Task 8 (2.0.0) renamed this engine's flag value and env var. Neither
+# check below is a compatibility shim — both still refuse to run. They
+# only replace a generic "Unknown option"/silent-ignore outcome with a
+# message naming the new spelling, so a user hitting either one has
+# something to act on.
+if [[ -n "${FERNFLOWER_JAR_PATH:-}" ]]; then
+  echo "Error: FERNFLOWER_JAR_PATH 已於 2.0.0 更名為 VINEFLOWER_JAR" >&2
+  exit 1
+fi
+
 # --- Validate input ---
 if [[ -z "$INPUT_FILE" ]]; then
   echo "Error: No input file specified." >&2
@@ -88,9 +98,13 @@ case "$ext_lower" in
 esac
 
 case "$ENGINE" in
-  jadx|fernflower|both) ;;
+  jadx|vineflower|both) ;;
+  fernflower)
+    echo "Error: --engine fernflower 已於 2.0.0 更名為 --engine vineflower" >&2
+    exit 1
+    ;;
   *)
-    echo "Error: Unknown engine '$ENGINE'. Use jadx, fernflower, or both." >&2
+    echo "Error: Unknown engine '$ENGINE'. Use jadx, vineflower, or both." >&2
     exit 1
     ;;
 esac
@@ -152,23 +166,23 @@ run_jadx() {
   return 1
 }
 
-# --- Fernflower decompilation ---
-run_fernflower() {
+# --- Vineflower decompilation ---
+run_vineflower() {
   local out_dir="$1"
   local jar_to_decompile="$INPUT_FILE_ABS"
   local ff_status=0
   local count=0
-  local ff_timeout_seconds="${FERNFLOWER_TIMEOUT_SECONDS:-900}"
+  local ff_timeout_seconds="${VINEFLOWER_TIMEOUT_SECONDS:-900}"
 
   # dex2jar has been removed from this pipeline (2.0.0): converting DEX to
   # JVM bytecode first threw away exactly the metadata (lambdas, generic
-  # signatures, records, switch-on-string) that made Fernflower/Vineflower
-  # worth running in the first place, and jadx reads DEX directly and
-  # better. So this engine now only ever runs on real JVM bytecode.
+  # signatures, records, switch-on-string) that made Vineflower worth
+  # running in the first place, and jadx reads DEX directly and better. So
+  # this engine now only ever runs on real JVM bytecode.
   case "$ext_lower" in
     jar|aar|class) ;;
     *)
-      echo "Error: The fernflower/vineflower engine only decompiles .jar, .aar, and .class files." >&2
+      echo "Error: The vineflower engine only decompiles .jar, .aar, and .class files." >&2
       echo "Got '.$ext_lower'. dex2jar conversion has been removed — jadx reads DEX/APK-family files natively and produces better results." >&2
       echo "Use --engine jadx for .apk, .xapk, .apkm, .apks, .aab, .dex, and .zip files." >&2
       return 1
@@ -176,14 +190,14 @@ run_fernflower() {
   esac
 
   if ! tool_argv vineflower; then
-    echo "Error: Fernflower/Vineflower JAR not found." >&2
-    echo "Set FERNFLOWER_JAR_PATH or see references/setup-guide.md" >&2
+    echo "Error: Vineflower JAR not found." >&2
+    echo "Set VINEFLOWER_JAR or see references/setup-guide.md" >&2
     return 1
   fi
 
   mkdir -p "$out_dir"
 
-  # Build fernflower args
+  # Build vineflower args
   local ff_args=()
   ff_args+=("-dgs=1")   # decompile generic signatures
   ff_args+=("-mpm=60")  # 60s max per method to avoid hangs
@@ -195,7 +209,7 @@ run_fernflower() {
 
   echo "Running: ${TOOL_ARGV[*]} ${ff_args[*]}"
   if command -v timeout &>/dev/null && [[ "$ff_timeout_seconds" =~ ^[0-9]+$ ]] && (( ff_timeout_seconds > 0 )); then
-    echo "Fernflower timeout: ${ff_timeout_seconds}s (override with FERNFLOWER_TIMEOUT_SECONDS)"
+    echo "Vineflower timeout: ${ff_timeout_seconds}s (override with VINEFLOWER_TIMEOUT_SECONDS)"
     if timeout "${ff_timeout_seconds}s" "${TOOL_ARGV[@]}" "${ff_args[@]}"; then
       ff_status=0
     else
@@ -207,7 +221,7 @@ run_fernflower() {
     ff_status=$?
   fi
 
-  # Fernflower outputs a JAR containing .java files — extract it
+  # Vineflower outputs a JAR containing .java files — extract it
   local result_jar="$out_dir/$(basename "$jar_to_decompile")"
   if [[ -f "$result_jar" ]]; then
     local sources_dir="$out_dir/sources"
@@ -215,7 +229,7 @@ run_fernflower() {
     if unzip -qo "$result_jar" -d "$sources_dir"; then
       rm -f "$result_jar"
     else
-      echo "Warning: Fernflower result jar $result_jar could not be extracted; checking for direct folder output." >&2
+      echo "Warning: Vineflower result jar $result_jar could not be extracted; checking for direct folder output." >&2
     fi
   fi
 
@@ -240,22 +254,22 @@ run_fernflower() {
   fi
 
   if [[ $count -gt 0 ]]; then
-    echo "Fernflower output: $sources_dir/"
-    echo "Java files decompiled by Fernflower: $count"
+    echo "Vineflower output: $sources_dir/"
+    echo "Java files decompiled by Vineflower: $count"
     if [[ $ff_status -ne 0 ]]; then
-      echo "Warning: Fernflower/Vineflower exited with status $ff_status after writing $count Java files; treating this as partial success." >&2
+      echo "Warning: Vineflower exited with status $ff_status after writing $count Java files; treating this as partial success." >&2
       return 2
     fi
     return 0
   fi
 
-  echo "Error: Fernflower/Vineflower produced no Java output." >&2
+  echo "Error: Vineflower produced no Java output." >&2
 
   if [[ $ff_status -ne 0 ]]; then
     if [[ $ff_status -eq 124 ]]; then
-      echo "Error: Fernflower/Vineflower exceeded timeout (${ff_timeout_seconds}s)." >&2
+      echo "Error: Vineflower exceeded timeout (${ff_timeout_seconds}s)." >&2
     fi
-    echo "Error: Fernflower/Vineflower exited with status $ff_status." >&2
+    echo "Error: Vineflower exited with status $ff_status." >&2
   fi
   return 1
 }
@@ -325,7 +339,7 @@ decompile_single() {
   local out_dir="$2"
   local label="$3"
 
-  # Temporarily override INPUT_FILE_ABS for run_jadx/run_fernflower
+  # Temporarily override INPUT_FILE_ABS for run_jadx/run_vineflower
   local saved_input="$INPUT_FILE_ABS"
   local saved_ext="$ext_lower"
   INPUT_FILE_ABS="$file_abs"
@@ -352,19 +366,19 @@ decompile_single() {
         echo "jadx completed with warnings but produced usable output."
       fi
       ;;
-    fernflower)
+    vineflower)
       local ff_status=0
-      if run_fernflower "$out_dir"; then
+      if run_vineflower "$out_dir"; then
         ff_status=0
       else
         ff_status=$?
       fi
-      print_structure "$out_dir/sources" "fernflower"
+      print_structure "$out_dir/sources" "vineflower"
       if [[ $ff_status -eq 1 ]]; then
         return 1
       fi
       if [[ $ff_status -eq 2 ]]; then
-        echo "Fernflower completed with warnings but produced usable output."
+        echo "Vineflower completed with warnings but produced usable output."
       fi
       ;;
     both)
@@ -380,11 +394,11 @@ decompile_single() {
         return 1
       fi
       if [[ $jadx_status -eq 2 ]]; then
-        echo "Continuing to Fernflower because jadx produced usable output despite warnings."
+        echo "Continuing to Vineflower because jadx produced usable output despite warnings."
       fi
       echo
-      echo "--- Pass 2: Fernflower ---"
-      if run_fernflower "$out_dir/fernflower"; then
+      echo "--- Pass 2: Vineflower ---"
+      if run_vineflower "$out_dir/vineflower"; then
         ff_status=0
       else
         ff_status=$?
@@ -393,11 +407,11 @@ decompile_single() {
         return 1
       fi
       if [[ $ff_status -eq 2 ]]; then
-        echo "Continuing with Fernflower output because it produced usable sources despite warnings."
+        echo "Continuing with Vineflower output because it produced usable sources despite warnings."
       fi
 
       print_structure "$out_dir/jadx/sources" "jadx"
-      print_structure "$out_dir/fernflower/sources" "fernflower"
+      print_structure "$out_dir/vineflower/sources" "vineflower"
 
       echo
       echo "=== Comparison ==="
@@ -405,11 +419,11 @@ decompile_single() {
       if [[ -d "$out_dir/jadx/sources" ]]; then
         jadx_count=$(find "$out_dir/jadx/sources" -name "*.java" | wc -l)
       fi
-      if [[ -d "$out_dir/fernflower/sources" ]]; then
-        ff_count=$(find "$out_dir/fernflower/sources" -name "*.java" | wc -l)
+      if [[ -d "$out_dir/vineflower/sources" ]]; then
+        ff_count=$(find "$out_dir/vineflower/sources" -name "*.java" | wc -l)
       fi
       echo "jadx:        $jadx_count Java files"
-      echo "Fernflower:  $ff_count Java files"
+      echo "Vineflower:  $ff_count Java files"
 
       if [[ -d "$out_dir/jadx/sources" ]]; then
         local jadx_error_files
@@ -423,7 +437,7 @@ decompile_single() {
         echo "jadx files with warnings/errors: $jadx_errors"
       fi
       echo
-      echo "Tip: compare specific classes between jadx/ and fernflower/ to pick the better output."
+      echo "Tip: compare specific classes between jadx/ and vineflower/ to pick the better output."
       ;;
   esac
 

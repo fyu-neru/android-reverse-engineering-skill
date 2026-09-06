@@ -1,29 +1,29 @@
-# Fernflower / Vineflower CLI Reference
+# Vineflower CLI Reference
 
-Fernflower is the JetBrains analytical Java decompiler. [Vineflower](https://github.com/Vineflower/vineflower) is the actively maintained community fork with better output quality and published releases. They share the same CLI interface.
+[Vineflower](https://github.com/Vineflower/vineflower) is an actively maintained analytical Java decompiler with published releases on GitHub and Maven Central. It does well on complex Java constructs — modern language features (records, sealed classes, pattern matching), lambdas, generics, and switch expressions — and is the engine this plugin's `--engine vineflower` and `--engine both` options run.
 
-## When to Use Fernflower vs jadx
+## When to Use Vineflower vs jadx
 
 | Scenario | Recommended |
 |---|---|
 | APK with resources needed | jadx |
-| Standard Java JAR/library | Fernflower |
-| jadx output has warnings/errors on specific classes | Fernflower on those classes |
-| Complex lambdas, generics, streams | Fernflower |
+| Standard Java JAR/library | Vineflower |
+| jadx output has warnings/errors on specific classes | Vineflower on those classes |
+| Complex lambdas, generics, streams | Vineflower |
 | Large APK (>50MB), quick overview | jadx |
-| Obfuscated Android app | jadx first, Fernflower on problem areas |
+| Obfuscated Android app | jadx first, Vineflower on problem areas |
 | Both decompilers available | Use `--engine both` and compare |
 
 ## Basic Usage
 
 ```bash
-java -jar fernflower.jar [options] <source>... <destination>
+java -jar vineflower.jar [options] <source>... <destination>
 ```
 
 - `<source>` — JAR file, class file, or directory containing class files
 - `<destination>` — output directory
 
-For a JAR input, Fernflower produces a JAR in the destination containing `.java` source files. Extract it with `unzip` to browse the sources.
+For a JAR input, Vineflower produces a JAR in the destination containing `.java` source files. Extract it with `unzip` to browse the sources.
 
 ## Key Options
 
@@ -49,43 +49,43 @@ Options use the format `-<key>=<value>`. Boolean options: `1` = enabled, `0` = d
 ### General use
 
 ```bash
-java -jar fernflower.jar -dgs=1 -mpm=60 input.jar output/
+java -jar vineflower.jar -dgs=1 -mpm=60 input.jar output/
 ```
 
 ### Obfuscated code
 
 ```bash
-java -jar fernflower.jar -dgs=1 -ren=1 -mpm=60 input.jar output/
+java -jar vineflower.jar -dgs=1 -ren=1 -mpm=60 input.jar output/
 ```
 
 ### Maximum detail
 
 ```bash
-java -jar fernflower.jar -dgs=1 -hes=0 -hdc=0 -mpm=60 input.jar output/
+java -jar vineflower.jar -dgs=1 -hes=0 -hdc=0 -mpm=60 input.jar output/
 ```
 
 ### With Android SDK context (better type resolution)
 
 ```bash
-java -jar fernflower.jar -dgs=1 -mpm=60 -e=$ANDROID_HOME/platforms/android-34/android.jar input.jar output/
+java -jar vineflower.jar -dgs=1 -mpm=60 -e=$ANDROID_HOME/platforms/android-34/android.jar input.jar output/
 ```
 
 ## Working with APK Files
 
-Fernflower cannot read APK/DEX files directly. Use dex2jar first:
+Vineflower cannot read APK/DEX files directly. Use dex2jar first:
 
 ```bash
 # Step 1: Convert DEX to JAR
 d2j-dex2jar -f -o app-converted.jar app.apk
 
-# Step 2: Decompile with Fernflower
-java -jar fernflower.jar -dgs=1 -mpm=60 app-converted.jar output/
+# Step 2: Decompile with Vineflower
+java -jar vineflower.jar -dgs=1 -mpm=60 app-converted.jar output/
 
 # Step 3: Extract the resulting source JAR
 unzip -o output/app-converted.jar -d output/sources/
 ```
 
-The `decompile.sh --engine fernflower` script automates these steps.
+`decompile.sh --engine vineflower` does **not** do this conversion for you: as of 2.0.0 it only accepts `.jar`, `.aar`, and `.class` input and refuses anything else outright (dex2jar is no longer part of this plugin's pipeline — see `setup-guide.md`'s "Manual Fallback Tools" section). Run the two steps above by hand first if you need Vineflower's output from an APK.
 
 ## Supported Input Formats
 
@@ -102,14 +102,10 @@ The `decompile.sh --engine fernflower` script automates these steps.
 
 - **JAR input** → Produces `<destination>/<input-name>.jar` containing `.java` files
 - **Class file input** → Produces `.java` files directly in the destination
-- **No resource decoding** — Fernflower only produces Java source, never XML/resources
+- **No resource decoding** — Vineflower only produces Java source, never XML/resources
 
-## Fernflower vs Vineflower
-
-Vineflower is the recommended fork. Improvements over upstream Fernflower:
+## Releases and Maintenance
 
 - Published releases on GitHub and Maven Central
-- Better handling of modern Java (records, sealed classes, pattern matching)
-- More accurate lambda and switch expression decompilation
 - Active bug fixes and community maintenance
-- Same CLI interface — drop-in replacement
+- Stable CLI interface across releases

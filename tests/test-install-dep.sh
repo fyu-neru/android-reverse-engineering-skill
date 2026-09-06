@@ -156,7 +156,7 @@ assert_not_contains "$cd_out" "apktool" \
 # jadx/vineflower "already installed" detection must go through
 # tool_resolve (env override -> PATH probe -> candidates), not a
 # hardcoded `command -v` check — the same proof shape as check-deps.sh's
-# Task 3 test: a hardcoded check cannot see JADX_BIN/FERNFLOWER_JAR_PATH
+# Task 3 test: a hardcoded check cannot see JADX_BIN/VINEFLOWER_JAR
 # at all, so this is only satisfiable by actually consuming the reader.
 # =====================================================================
 home1=$(new_tmpdir)
@@ -188,10 +188,10 @@ exit 1'
 jar_target="$home2/custom-vineflower.jar"
 touch "$jar_target"
 
-out2=$(HOME="$home2" PATH="$emptybin2:$PATH" FERNFLOWER_JAR_PATH="$jar_target" \
+out2=$(HOME="$home2" PATH="$emptybin2:$PATH" VINEFLOWER_JAR="$jar_target" \
        "${BASH:-bash}" "$SCRIPT" vineflower 2>&1)
 assert_contains "$out2" "already available: $jar_target" \
-  "[all] install-dep.sh vineflower resolves an already-installed jar via the FERNFLOWER_JAR_PATH env override with nothing on PATH"
+  "[all] install-dep.sh vineflower resolves an already-installed jar via the VINEFLOWER_JAR env override with nothing on PATH"
 assert_not_contains "$out2" "CURL_SHOULD_NOT_RUN" \
   "[all] install-dep.sh vineflower does not fall through to the GitHub download path when already resolved"
 
@@ -206,7 +206,7 @@ fixture_psv="$fixture_root/skills/android-reverse-engineering/scripts/lib/tools.
 cat > "$fixture_psv" <<PSV
 id|required|platform|kind|probe|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
 jadx|required|all|path|jadx-test-probe-nonexistent|JADX_BIN_TEST_NONEXISTENT|-|acme/jadx-fake|jadx-fake-{VERSION}.zip|0.0.1|$EMPTY_SHA256|test fixture jadx
-vineflower|optional|all|jar|vineflower-test-probe-nonexistent,fernflower-test-probe-nonexistent|FERNFLOWER_JAR_PATH_TEST_NONEXISTENT|-|acme/vineflower-fake|vineflower-fake-{VERSION}.jar|0.0.2|$EMPTY_SHA256|test fixture vineflower
+vineflower|optional|all|jar|vineflower-test-probe-nonexistent,fernflower-test-probe-nonexistent|VINEFLOWER_JAR_TEST_NONEXISTENT|-|acme/vineflower-fake|vineflower-fake-{VERSION}.jar|0.0.2|$EMPTY_SHA256|test fixture vineflower
 PSV
 
 home3=$(new_tmpdir)
@@ -318,6 +318,48 @@ assert_contains "$out6" "[MANUAL]" \
   "[all] install-dep.sh jadx's network-failure path still prints the actionable [MANUAL] message it always has"
 assert_not_contains "$out6" "Digest mismatch" \
   "[all] install-dep.sh jadx's network failure is never reported as a digest mismatch"
+
+# =====================================================================
+# Task 8: 'fernflower' is a renamed dependency name, not one install-dep.sh
+# still accepts as an alias for 'vineflower'. It must print a migration
+# message the user can act on and refuse to run, matching the same
+# not-a-compatibility-shim treatment decompile.sh's --engine gives it.
+# =====================================================================
+out_ff=$("${BASH:-bash}" "$SCRIPT" fernflower 2>&1)
+status_ff=$?
+assert_equals "$status_ff" "1" \
+  "[all] install-dep.sh fernflower (as a dependency name) exits non-zero (renamed to vineflower in 2.0.0)"
+assert_contains "$out_ff" "'fernflower'" \
+  "[all] install-dep.sh fernflower's migration message names the old dependency name"
+assert_contains "$out_ff" "'vineflower'" \
+  "[all] install-dep.sh fernflower's migration message names the new dependency name to use instead"
+
+# =====================================================================
+# Task 8: install-dep.sh must warn when the user's shell profile still
+# exports the pre-2.0.0 FERNFLOWER_JAR_PATH name. Nothing reads it after
+# the rename, and add_to_profile is about to append a second, live
+# VINEFLOWER_JAR line right next to that now-dead one — silently leaving
+# both in place would be confusing for anyone who later greps their
+# profile wondering which one is real.
+# =====================================================================
+home7=$(new_tmpdir)
+bin7=$(new_tmpdir)
+cat > "$home7/.bashrc" <<'PROFILE'
+# pre-existing content from an earlier install
+export FERNFLOWER_JAR_PATH="/old/path/to/fernflower.jar"
+PROFILE
+
+urllog7="$home7/urls.log"
+: > "$urllog7"
+json7=$(gh_json_fixture "1.12.0" "vineflower-1.12.0.jar" "$EMPTY_SHA256")
+make_curl_stub "$bin7" "$urllog7" "$json7"
+
+out7=$(HOME="$home7" PATH="$bin7:$PATH" "${BASH:-bash}" "$SCRIPT" vineflower 2>&1)
+
+assert_contains "$out7" "$home7/.bashrc still exports FERNFLOWER_JAR_PATH" \
+  "[all] install-dep.sh vineflower warns when the profile still exports the old FERNFLOWER_JAR_PATH name"
+assert_contains "$out7" "VINEFLOWER_JAR" \
+  "[all] install-dep.sh vineflower's profile warning names the new VINEFLOWER_JAR variable to migrate to"
 
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"

@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/install-dep.sh
+FIND:  fernflower)
+REPLACE:  fernflower-disabled)
+EXPECT:install-dep.sh fernflower's migration message names the new dependency name to use instead

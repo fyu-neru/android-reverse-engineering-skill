@@ -1,4 +1,4 @@
-# decompile.ps1 — Decompile APK/XAPK/APKM/APKS/AAB/DEX/ZIP/JAR/AAR/CLASS using jadx, fernflower, or both
+# decompile.ps1 — Decompile APK/XAPK/APKM/APKS/AAB/DEX/ZIP/JAR/AAR/CLASS using jadx, vineflower, or both
 param(
     [Alias('o')]
     [string]$Output,
@@ -12,6 +12,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Ensure Write-Host output round-trips correctly when this script's stdout
+# is redirected to a file rather than a real console: the migration-hint
+# messages below contain non-ASCII text, and some Windows console code
+# pages otherwise re-encode it lossily on the way out.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 . (Join-Path $PSScriptRoot 'lib/Tools.ps1')
 
@@ -39,34 +45,48 @@ Options:
   -Output DIR       Output directory (default: <filename>-decompiled)
   -Deobf            Enable deobfuscation of names
   -NoRes            Skip resource decoding (faster, code-only)
-  -Engine ENGINE    Decompiler engine: jadx, fernflower, or both (default: jadx)
+  -Engine ENGINE    Decompiler engine: jadx, vineflower, or both (default: jadx)
   -Help             Show this help message
 
 Engines:
   jadx        Use jadx (default). Handles APK/XAPK/APKM/APKS/AAB/DEX/ZIP/JAR/AAR
               natively (including split bundles) and decodes resources.
-  fernflower  Use Fernflower/Vineflower. Better on complex Java, lambdas, generics.
+  vineflower  Use Vineflower. Better on complex Java, lambdas, generics.
               Only accepts .jar, .aar, and .class input - it decompiles JVM
               bytecode, not DEX, and dex2jar is no longer part of this pipeline.
               Use -Engine jadx for anything else.
   both        Run both decompilers side by side for comparison.
               jadx output  -> <output>/jadx/
-              fernflower   -> <output>/fernflower/
-              (requires a .jar, .aar, or .class input, same as -Engine fernflower)
+              vineflower   -> <output>/vineflower/
+              (requires a .jar, .aar, or .class input, same as -Engine vineflower)
 
 Environment:
-  FERNFLOWER_JAR_PATH   Path to fernflower.jar or vineflower.jar
+  VINEFLOWER_JAR   Path to vineflower.jar
 
 Examples:
   .\decompile.ps1 app-release.apk
   .\decompile.ps1 app-bundle.xapk
   .\decompile.ps1 -Engine both -Deobf library.jar
-  .\decompile.ps1 -Engine fernflower library.jar
+  .\decompile.ps1 -Engine vineflower library.jar
 "@
     exit 0
 }
 
 if ($Help) { Show-Usage }
+
+# Task 8 (2.0.0) renamed this engine's flag value and env var. Neither
+# check below is a compatibility shim — both still refuse to run. They
+# only replace a generic "Unknown option"/silent-ignore outcome with a
+# message naming the new spelling, so a user hitting either one has
+# something to act on.
+if ($Engine -eq 'fernflower') {
+    Write-Host "Error: --engine fernflower 已於 2.0.0 更名為 --engine vineflower" -ForegroundColor Red
+    exit 1
+}
+if ($env:FERNFLOWER_JAR_PATH) {
+    Write-Host "Error: FERNFLOWER_JAR_PATH 已於 2.0.0 更名為 VINEFLOWER_JAR" -ForegroundColor Red
+    exit 1
+}
 
 # --- Validate input ---
 if (-not $InputFile) {
@@ -85,8 +105,8 @@ if ($extLower -notin @('apk', 'xapk', 'apkm', 'apks', 'aab', 'dex', 'zip', 'jar'
     exit 1
 }
 
-if ($Engine -notin @('jadx', 'fernflower', 'both')) {
-    Write-Host "Error: Unknown engine '$Engine'. Use jadx, fernflower, or both." -ForegroundColor Red
+if ($Engine -notin @('jadx', 'vineflower', 'both')) {
+    Write-Host "Error: Unknown engine '$Engine'. Use jadx, vineflower, or both." -ForegroundColor Red
     exit 1
 }
 
@@ -138,17 +158,17 @@ function Invoke-Jadx {
     return $true
 }
 
-# --- Fernflower decompilation ---
-function Invoke-Fernflower {
+# --- Vineflower decompilation ---
+function Invoke-Vineflower {
     param([string]$OutDir, [string]$FileAbs, [string]$FileExt)
 
     # dex2jar has been removed from this pipeline (2.0.0): converting DEX to
     # JVM bytecode first threw away exactly the metadata (lambdas, generic
-    # signatures, records, switch-on-string) that made Fernflower/Vineflower
-    # worth running in the first place, and jadx reads DEX directly and
-    # better. So this engine now only ever runs on real JVM bytecode.
+    # signatures, records, switch-on-string) that made Vineflower worth
+    # running in the first place, and jadx reads DEX directly and better.
+    # So this engine now only ever runs on real JVM bytecode.
     if ($FileExt -notin @('jar', 'aar', 'class')) {
-        Write-Host "Error: The fernflower/vineflower engine only decompiles .jar, .aar, and .class files." -ForegroundColor Red
+        Write-Host "Error: The vineflower engine only decompiles .jar, .aar, and .class files." -ForegroundColor Red
         Write-Host "Got '.$FileExt'. dex2jar conversion has been removed - jadx reads DEX/APK-family files natively and produces better results."
         Write-Host "Use -Engine jadx for .apk, .xapk, .apkm, .apks, .aab, .dex, and .zip files."
         return $false
@@ -156,8 +176,8 @@ function Invoke-Fernflower {
 
     $ffCmd = Resolve-Tool -Id 'vineflower'
     if (-not $ffCmd) {
-        Write-Host "Error: Fernflower/Vineflower not found." -ForegroundColor Red
-        Write-Host "Set FERNFLOWER_JAR_PATH or see references/setup-guide.md"
+        Write-Host "Error: Vineflower not found." -ForegroundColor Red
+        Write-Host "Set VINEFLOWER_JAR or see references/setup-guide.md"
         return $false
     }
 
@@ -165,7 +185,7 @@ function Invoke-Fernflower {
 
     $jarToDecompile = $FileAbs
 
-    # Build fernflower args
+    # Build vineflower args
     $ffArgs = @('-dgs=1', '-mpm=60')
     if ($Deobf) { $ffArgs += '-ren=1' }
     $ffArgs += $jarToDecompile
@@ -184,7 +204,7 @@ function Invoke-Fernflower {
         & java -jar $ffCmd.Path @ffArgs | Out-Host
     }
 
-    # Fernflower outputs a JAR containing .java files — extract it
+    # Vineflower outputs a JAR containing .java files — extract it
     $resultJar = Join-Path $OutDir ([IO.Path]::GetFileName($jarToDecompile))
     if (Test-Path $resultJar) {
         $sourcesDir = Join-Path $OutDir 'sources'
@@ -192,8 +212,8 @@ function Invoke-Fernflower {
         Expand-Archive -Path $resultJar -DestinationPath $sourcesDir -Force
         Remove-Item $resultJar -Force
         $count = (Get-ChildItem -Path $sourcesDir -Recurse -Filter '*.java').Count
-        Write-Host "Fernflower output: $sourcesDir\"
-        Write-Host "Java files decompiled by Fernflower: $count"
+        Write-Host "Vineflower output: $sourcesDir\"
+        Write-Host "Java files decompiled by Vineflower: $count"
     }
 
     return $true
@@ -271,7 +291,7 @@ function Invoke-DecompileSingle {
     # function's own uncaptured return) AND is unavailable for deciding
     # whether decompilation actually succeeded. That was harmless while
     # nothing downstream checked it; it became load-bearing once the
-    # fernflower engine started refusing input and needed its failure to
+    # vineflower engine started refusing input and needed its failure to
     # actually reach the caller's exit code (see the C1 fix below).
     $engineOk = $true
 
@@ -280,26 +300,26 @@ function Invoke-DecompileSingle {
             $engineOk = Invoke-Jadx -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
             Show-Structure (Join-Path $OutDir 'sources') 'jadx'
         }
-        'fernflower' {
-            $engineOk = Invoke-Fernflower -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
-            Show-Structure (Join-Path $OutDir 'sources') 'fernflower'
+        'vineflower' {
+            $engineOk = Invoke-Vineflower -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
+            Show-Structure (Join-Path $OutDir 'sources') 'vineflower'
         }
         'both' {
             Write-Host "--- Pass 1: jadx ---"
             $jadxOk = Invoke-Jadx -OutDir (Join-Path $OutDir 'jadx') -FileAbs $FileAbs -FileExt $fileExt
             Write-Host ""
-            Write-Host "--- Pass 2: Fernflower ---"
-            $ffOk = Invoke-Fernflower -OutDir (Join-Path $OutDir 'fernflower') -FileAbs $FileAbs -FileExt $fileExt
+            Write-Host "--- Pass 2: Vineflower ---"
+            $ffOk = Invoke-Vineflower -OutDir (Join-Path $OutDir 'vineflower') -FileAbs $FileAbs -FileExt $fileExt
             $engineOk = $jadxOk -and $ffOk
 
             Show-Structure (Join-Path $OutDir 'jadx\sources') 'jadx'
-            Show-Structure (Join-Path $OutDir 'fernflower\sources') 'fernflower'
+            Show-Structure (Join-Path $OutDir 'vineflower\sources') 'vineflower'
 
             Write-Host ""
             Write-Host "=== Comparison ==="
             $jadxCount = 0; $ffCount = 0
             $jadxSources = Join-Path $OutDir 'jadx\sources'
-            $ffSources   = Join-Path $OutDir 'fernflower\sources'
+            $ffSources   = Join-Path $OutDir 'vineflower\sources'
             if (Test-Path $jadxSources) {
                 $jadxCount = (Get-ChildItem -Path $jadxSources -Recurse -Filter '*.java').Count
             }
@@ -307,7 +327,7 @@ function Invoke-DecompileSingle {
                 $ffCount = (Get-ChildItem -Path $ffSources -Recurse -Filter '*.java').Count
             }
             Write-Host "jadx:        $jadxCount Java files"
-            Write-Host "Fernflower:  $ffCount Java files"
+            Write-Host "Vineflower:  $ffCount Java files"
 
             if (Test-Path $jadxSources) {
                 $jadxErrors = (Get-ChildItem -Path $jadxSources -Recurse -Filter '*.java' -File |
@@ -316,7 +336,7 @@ function Invoke-DecompileSingle {
                 Write-Host "jadx files with warnings/errors: $jadxErrors"
             }
             Write-Host ""
-            Write-Host "Tip: compare specific classes between jadx/ and fernflower/ to pick the better output."
+            Write-Host "Tip: compare specific classes between jadx/ and vineflower/ to pick the better output."
         }
     }
 

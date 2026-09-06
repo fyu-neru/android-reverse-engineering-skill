@@ -1,4 +1,4 @@
 FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/install-dep.sh
 FIND:  if resolved=$(tool_resolve vineflower); then
 REPLACE:  if command -v vineflower &>/dev/null || command -v fernflower &>/dev/null; then
-EXPECT:resolves an already-installed jar via the FERNFLOWER_JAR_PATH env override with nothing on PATH
+EXPECT:resolves an already-installed jar via the VINEFLOWER_JAR env override with nothing on PATH

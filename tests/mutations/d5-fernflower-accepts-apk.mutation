@@ -1,4 +1,4 @@
 FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh
 FIND:    jar|aar|class) ;;
 REPLACE:    jar|aar|class|apk) ;;
-EXPECT:D5: --engine fernflower refusal names the accepted extensions
+EXPECT:D5: --engine vineflower refusal names the accepted extensions

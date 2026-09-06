@@ -45,16 +45,16 @@ After any installations, re-run `check-deps.sh` to verify. Do not proceed until 
 
 Run the decompile script on the target file. Choose the engine based on the input:
 
-- **APK, XAPK, APKM, APKS, AAB, DEX, or ZIP** → use jadx (it reads all of these natively; there is no separate extraction step, and the fernflower/vineflower engine refuses these formats):
+- **APK, XAPK, APKM, APKS, AAB, DEX, or ZIP** → use jadx (it reads all of these natively; there is no separate extraction step, and the vineflower engine refuses these formats):
 
   ```bash
   bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.sh <file>
   ```
 
-- **JAR/AAR/class** and Fernflower/Vineflower is available → prefer fernflower for better Java output:
+- **JAR/AAR/class** and Vineflower is available → prefer vineflower for better Java output:
 
   ```bash
-  bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.sh --engine fernflower <file>
+  bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.sh --engine vineflower <file>
   ```
 
 - **If jadx output has warnings** or the user wants the best quality → run both and compare:
@@ -86,6 +86,6 @@ Tell the user what they can do next:
 - **Trace call flows**: "I can follow the execution flow from any Activity to its API calls"
 - **Extract APIs**: "I can search for all HTTP endpoints and document them"
 - **Analyze specific classes**: "Point me to a specific class or feature to analyze"
-- **Re-decompile with Fernflower**: If jadx output has warnings, offer to re-run with `--engine both` for comparison
+- **Re-decompile with Vineflower**: If jadx output has warnings, offer to re-run with `--engine both` for comparison
 
 Refer to the full skill documentation in `${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/SKILL.md` for the complete workflow.

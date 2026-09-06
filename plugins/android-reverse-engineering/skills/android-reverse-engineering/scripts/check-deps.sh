@@ -84,7 +84,7 @@ done
 for _dep_id in $(tool_list optional); do
   case "$_dep_id" in
     vineflower)
-      # --- Fernflower / Vineflower ---
+      # --- Vineflower ---
       # tool_resolve owns the resolution order (env override -> PATH probe
       # -> candidate paths); this block only figures out WHICH of those
       # three kinds of match tool_resolve made, so each kind can keep its
@@ -114,10 +114,10 @@ for _dep_id in $(tool_list optional); do
         if [[ -n "$ff_matched_probe" ]]; then
           echo "[OK] $ff_matched_probe CLI detected"
         else
-          echo "[OK] Fernflower/Vineflower JAR found: $ff_path"
+          echo "[OK] Vineflower JAR found: $ff_path"
         fi
       else
-        echo "[MISSING] Fernflower/Vineflower not found (optional — $ff_purpose)"
+        echo "[MISSING] Vineflower not found (optional — $ff_purpose)"
         missing_optional+=("vineflower")
       fi
       ;;

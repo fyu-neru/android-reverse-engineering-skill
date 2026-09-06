@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh
+FIND:if [[ -n "${FERNFLOWER_JAR_PATH:-}" ]]; then
+REPLACE:if [[ -n "${FERNFLOWER_JAR_PATH_DISABLED:-}" ]]; then
+EXPECT:D16: a set FERNFLOWER_JAR_PATH prints the exact migration hint
