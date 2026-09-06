@@ -2,7 +2,7 @@
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0) [![GitHub stars](https://img.shields.io/github/stars/SimoneAvogadro/android-reverse-engineering-skill?style=social)](https://github.com/SimoneAvogadro/android-reverse-engineering-skill/stargazers) [![GitHub last commit](https://img.shields.io/github/last-commit/SimoneAvogadro/android-reverse-engineering-skill)](https://github.com/SimoneAvogadro/android-reverse-engineering-skill/commits/master)
 
-A Claude Code skill that decompiles Android APK/XAPK/JAR/AAR files and **extracts the HTTP APIs** used by the app — Retrofit endpoints, OkHttp calls, hardcoded URLs, authentication patterns — so you can document and reproduce them without the original source code.
+A Claude Code skill that decompiles Android packages (APK, XAPK, APKM, APKS, AAB, DEX, ZIP, JAR, AAR) and **extracts the HTTP APIs** used by the app — Retrofit endpoints, OkHttp calls, hardcoded URLs, authentication patterns — so you can document and reproduce them without the original source code.
 
 > **First-class Kotlin support**: modern Android apps are Kotlin/KMP, heavily obfuscated with R8. This skill recovers the **original Kotlin class names** from metadata R8 cannot strip, and extracts APIs from **Ktor**, **Apollo (GraphQL)** and **Koin** — not just the classic Retrofit/OkHttp stack. See [Kotlin name recovery](#kotlin-name-recovery-r8-deobfuscation) below.
 
@@ -25,7 +25,7 @@ A Claude Code skill that decompiles Android APK/XAPK/JAR/AAR files and **extract
 | Capability | Description |
 |------------|-------------|
 | **Fingerprint first (Phase 0)** | Triage an APK/XAPK in seconds — detect the framework (Flutter / React Native / Cordova / Xamarin / native-Kotlin), HTTP stack, obfuscation level and native libs *before* spending time on a full decompile |
-| **Decompile** | APK, XAPK, JAR, and AAR files using jadx and Fernflower/Vineflower (single engine or side-by-side comparison) |
+| **Decompile** | APK, XAPK, APKM, APKS, AAB, DEX, ZIP, JAR, and AAR files using jadx and Vineflower (single engine or side-by-side comparison) |
 | **Recover Kotlin names** | Rebuild original `*Repository` / `*ViewModel` / `*UseCase` class names from R8-obfuscated binaries using Kotlin metadata that R8 cannot strip |
 | **Extract APIs** | Retrofit, OkHttp, Volley **and modern Kotlin/KMP stacks: Ktor, Apollo (GraphQL), Koin DI** — endpoints, hardcoded URLs, auth headers, tokens and HMAC request-signing schemes |
 | **Trace call flows** | From Activities/Fragments through ViewModels and repositories down to HTTP calls |
@@ -41,10 +41,9 @@ A Claude Code skill that decompiles Android APK/XAPK/JAR/AAR files and **extract
 
 **Optional (recommended):**
 
-- [Vineflower](https://github.com/Vineflower/vineflower) or [Fernflower](https://github.com/JetBrains/fernflower) — better output on complex Java code
-- [dex2jar](https://github.com/ThexXTURBOXx/dex2jar) — needed to use Fernflower on APK/DEX files
+- [Vineflower](https://github.com/Vineflower/vineflower) — better output on complex Java code (accepts `.jar`, `.aar`, and `.class` input only; jadx handles everything else, including APKs)
 
-See `plugins/android-reverse-engineering/skills/android-reverse-engineering/references/setup-guide.md` for detailed installation instructions.
+See `plugins/android-reverse-engineering/skills/android-reverse-engineering/references/setup-guide.md` for detailed installation instructions, including manual fallback tools (dex2jar, apktool) for edge cases jadx doesn't cover.
 
 ## Installation
 
@@ -111,14 +110,14 @@ bash plugins/android-reverse-engineering/skills/android-reverse-engineering/scri
 # Decompile APK with jadx (default)
 bash plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh app.apk
 
-# Decompile XAPK (auto-extracts and decompiles each APK inside)
+# Decompile XAPK (jadx reads it natively, merged into one source tree)
 bash plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh app-bundle.xapk
 
-# Decompile with Fernflower
-bash plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh --engine fernflower library.jar
+# Decompile with Vineflower (accepts .jar/.aar/.class only — use jadx for APKs)
+bash plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh --engine vineflower library.jar
 
-# Run both engines and compare
-bash plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh --engine both --deobf app.apk
+# Run both engines and compare (also requires .jar/.aar/.class input)
+bash plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh --engine both --deobf library.jar
 
 # Find API calls — defaults to a full scan across every supported stack
 bash plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/find-api-calls.sh output/sources/
@@ -170,7 +169,7 @@ android-reverse-engineering-skill/
 │       │       ├── references/
 │       │       │   ├── setup-guide.md
 │       │       │   ├── jadx-usage.md
-│       │       │   ├── fernflower-usage.md
+│       │       │   ├── vineflower-usage.md
 │       │       │   ├── api-extraction-patterns.md
 │       │       │   ├── kotlin-name-recovery.md
 │       │       │   ├── third_party_hosts.txt   # denylist for first/third-party bucketing
@@ -186,7 +185,11 @@ android-reverse-engineering-skill/
 │       │           ├── recover-kotlin-names.sh # R8 → real Kotlin class names
 │       │           ├── lookup-name.sh          # query the recovered name map
 │       │           ├── find-api-calls.sh
-│       │           └── find-api-calls.ps1
+│       │           ├── find-api-calls.ps1
+│       │           └── lib/                    # tool-resolution layer
+│       │               ├── tools.sh            # Bash: locate/verify tools from tools.psv
+│       │               ├── Tools.ps1           # PowerShell: locate/verify tools from tools.psv
+│       │               └── tools.psv           # tool registry: paths, env vars, GitHub release info
 │       └── commands/
 │           └── decompile.md                # /decompile slash command
 ├── LICENSE
@@ -196,10 +199,9 @@ android-reverse-engineering-skill/
 ## References
 
 - [jadx — Dex to Java decompiler](https://github.com/skylot/jadx)
-- [Fernflower — JetBrains analytical decompiler](https://github.com/JetBrains/fernflower)
-- [Vineflower — Fernflower community fork](https://github.com/Vineflower/vineflower)
-- [dex2jar — DEX to JAR converter](https://github.com/ThexXTURBOXx/dex2jar)
-- [apktool — Android resource decoder](https://apktool.org/)
+- [Vineflower — actively-maintained Fernflower community fork](https://github.com/Vineflower/vineflower)
+- [dex2jar — DEX to JAR converter](https://github.com/ThexXTURBOXx/dex2jar) — not a dependency; a manual fallback for converting an APK so Vineflower can read it (see setup-guide.md)
+- [apktool — Android resource decoder](https://apktool.org/) — not a dependency; a manual fallback for the cases where jadx's own resource decoding falls short (see setup-guide.md)
 
 ## Acknowledgments
 
