@@ -119,6 +119,9 @@ Options:
 - `--deobf` — Enable deobfuscation (recommended for obfuscated apps)
 - `--no-res` — Skip resources, decompile code only (faster)
 - `--engine ENGINE` — `jadx` (default), `vineflower`, or `both`
+- `--mode MODE` — jadx-only decompilation mode: `auto` (jadx's own default), `restructure`, `simple`, `fallback`. Omit this flag entirely to let jadx pick its own default — it is never hardcoded on jadx's behalf.
+
+**When jadx crashes on a specific class, or decompiles it into obviously broken output, reach for `--mode fallback`.** It bypasses jadx's normal CFG-restructuring decompiler for the problem class(es) in favor of a simpler, crash-resistant translation. It produces less readable code than jadx's default, so only reach for it when the default mode is the thing actually failing — it is the escape hatch for a class jadx cannot otherwise handle, not a general-purpose alternative.
 
 **Engine selection strategy**:
 

@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh
+FIND:  [[ -n "$MODE" ]] && args+=("-m" "$MODE")
+REPLACE:  args+=("-m" "${MODE:-auto}")
+EXPECT:--mode omitted does not pass -m to jadx at all

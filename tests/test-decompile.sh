@@ -282,6 +282,43 @@ assert_equals "$status16" "1" \
 assert_contains "$out16" "FERNFLOWER_JAR_PATH 已於 2.0.0 更名為 VINEFLOWER_JAR" \
   "[all] D16: a set FERNFLOWER_JAR_PATH prints the exact migration hint"
 
+# --- Task 1 (2.1.0): jadx's -m/--decompilation-mode must be reachable via
+# --mode, validated, and passed through as -m <value>. The part most likely
+# to be written wrong is the omitted case: --mode not given must NOT pass
+# -m at all (not even a hardcoded "-m auto") so jadx keeps deciding its own
+# default. --mode fallback is jadx's escape hatch for a class it crashes on
+# or decompiles into broken output — today's users cannot reach it. ---
+workmode=$(new_tmpdir)
+binmode=$(new_tmpdir)
+make_stub_bin "$binmode" jadx 'echo "JADX_ARGV: $*"
+out=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-d" ]; then out="$a"; fi
+  prev="$a"
+done
+mkdir -p "$out/sources"
+exit 0'
+
+touch "$workmode/app.apk"
+
+out_mode_set=$(cd "$workmode" && PATH="$binmode:$PATH" "${BASH:-bash}" "$SCRIPT" --mode fallback app.apk 2>&1)
+jadx_argv_mode_set=$(printf '%s\n' "$out_mode_set" | grep '^JADX_ARGV:' || true)
+assert_contains "$jadx_argv_mode_set" "-m fallback" \
+  "[all] Task1: --mode fallback is passed through to jadx as -m fallback"
+
+out_mode_unset=$(cd "$workmode" && PATH="$binmode:$PATH" "${BASH:-bash}" "$SCRIPT" app.apk 2>&1)
+jadx_argv_mode_unset=$(printf '%s\n' "$out_mode_unset" | grep '^JADX_ARGV:' || true)
+assert_not_contains "$jadx_argv_mode_unset" "-m " \
+  "[all] Task1: --mode omitted does not pass -m to jadx at all (jadx keeps its own default, not a hardcoded one)"
+
+out_mode_bad=$(cd "$workmode" && PATH="$binmode:$PATH" "${BASH:-bash}" "$SCRIPT" --mode bogus app.apk 2>&1)
+status_mode_bad=$?
+assert_equals "$status_mode_bad" "1" \
+  "[all] Task1: an invalid --mode value exits non-zero"
+assert_contains "$out_mode_bad" "auto, restructure, simple, or fallback" \
+  "[all] Task1: an invalid --mode value's error names the accepted values"
+
 # --- D11 (review round 1, C1): decompile.ps1's -Engine vineflower
 # refusal must exit non-zero, not announce failure and then print a
 # success banner. Found by actually running it: Invoke-DecompileSingle
@@ -685,6 +722,68 @@ CMD
   fi
   assert_equals "$fast22" "yes" \
     "[win] D22: decompile.ps1 returns in well under the stub's 5s sleep once VINEFLOWER_TIMEOUT_SECONDS(1) elapses"
+
+  # --- Task 1 (2.1.0) PS1 counterpart: decompile.ps1's Invoke-Jadx builds
+  # its own $jadxArgs independently of decompile.sh's args array, so the
+  # same -m behavior (passed only when -Mode is given, never a hardcoded
+  # default) has to be proven here too, not assumed from the bash side.
+  workmodeps=$(new_tmpdir)
+  binmodeps=$(new_tmpdir)
+  cat > "$binmodeps/jadx.cmd" <<'CMD'
+@echo off
+echo JADX_ARGV: %*
+set OUT=
+:loop
+if "%~1"=="" goto done
+if "%PREV%"=="-d" set OUT=%~1
+set PREV=%~1
+shift
+goto loop
+:done
+mkdir "%OUT%\sources" 2>nul
+exit /b 0
+CMD
+
+  touch "$workmodeps/app.apk"
+  native_ps1_modeps="$SCRIPT_DIR/decompile.ps1"
+  if command -v cygpath >/dev/null 2>&1; then
+    native_ps1_modeps=$(cygpath -w "$SCRIPT_DIR/decompile.ps1")
+  fi
+
+  # Filter PATH the same way D10/D13/D14 above do: this machine may have a
+  # real jadx installed, and resolution must be unambiguously forced to the
+  # stub above.
+  path_modeps=""
+  _pmps_oldifs="$IFS"
+  IFS=':'
+  for _pmps_dir in $PATH; do
+    IFS="$_pmps_oldifs"
+    if [ -n "$_pmps_dir" ] && [ ! -f "$_pmps_dir/jadx" ] && [ ! -f "$_pmps_dir/jadx.bat" ] && [ ! -f "$_pmps_dir/jadx.cmd" ]; then
+      path_modeps="${path_modeps:+$path_modeps:}$_pmps_dir"
+    fi
+    IFS=':'
+  done
+  IFS="$_pmps_oldifs"
+
+  outmodeps_set=$(cd "$workmodeps" && PATH="$binmodeps:$path_modeps" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_modeps" -Mode fallback app.apk 2>&1)
+  jadx_argv_modeps_set=$(printf '%s\n' "$outmodeps_set" | grep '^JADX_ARGV:' || true)
+  assert_contains "$jadx_argv_modeps_set" "-m fallback" \
+    "[win] Task1: decompile.ps1 -Mode fallback is passed through to jadx as -m fallback"
+
+  outmodeps_unset=$(cd "$workmodeps" && PATH="$binmodeps:$path_modeps" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_modeps" app.apk 2>&1)
+  jadx_argv_modeps_unset=$(printf '%s\n' "$outmodeps_unset" | grep '^JADX_ARGV:' || true)
+  assert_not_contains "$jadx_argv_modeps_unset" "-m " \
+    "[win] Task1: decompile.ps1 with -Mode omitted does not pass -m to jadx at all (jadx keeps its own default)"
+
+  outmodeps_bad=$(cd "$workmodeps" && PATH="$binmodeps:$path_modeps" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_modeps" -Mode bogus app.apk 2>&1)
+  status_modeps_bad=$?
+  assert_equals "$status_modeps_bad" "1" \
+    "[win] Task1: decompile.ps1 with an invalid -Mode value exits non-zero"
+  assert_contains "$outmodeps_bad" "auto, restructure, simple, or fallback" \
+    "[win] Task1: decompile.ps1's invalid -Mode error names the accepted values"
 fi
 
 cleanup_tmpdirs

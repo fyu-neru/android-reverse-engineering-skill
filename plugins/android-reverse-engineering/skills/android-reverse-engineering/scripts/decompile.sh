@@ -21,6 +21,9 @@ Options:
   --deobf           Enable deobfuscation of names
   --no-res          Skip resource decoding (faster, code-only)
   --engine ENGINE   Decompiler engine: jadx, vineflower, or both (default: jadx)
+  --mode MODE       jadx decompilation mode: auto, restructure, simple, or
+                    fallback. Passed through to jadx as -m. When omitted,
+                    nothing is passed and jadx uses its own default (auto).
   -h, --help        Show this help message
 
 Engines:
@@ -34,6 +37,16 @@ Engines:
               jadx output  → <output>/jadx/
               vineflower   → <output>/vineflower/
               (requires a .jar, .aar, or .class input, same as --engine vineflower)
+
+jadx modes (--mode, jadx-engine only):
+  auto         jadx picks the best strategy per method. This is jadx's own
+               default — it is never passed explicitly by this script unless
+               you type --mode auto yourself.
+  restructure  Force the normal CFG-restructuring decompiler.
+  simple       A simpler, more literal bytecode-to-source translation.
+  fallback     Escape hatch for a class jadx crashes on or decompiles into
+               obviously broken output — bypasses the normal decompiler for
+               it. Produces less readable code; use only when needed.
 
 Environment:
   VINEFLOWER_JAR   Path to vineflower.jar
@@ -52,6 +65,7 @@ OUTPUT_DIR=""
 DEOBF=false
 NO_RES=false
 ENGINE="jadx"
+MODE=""
 INPUT_FILE=""
 
 while [[ $# -gt 0 ]]; do
@@ -60,6 +74,7 @@ while [[ $# -gt 0 ]]; do
     --deobf)       DEOBF=true; shift ;;
     --no-res)      NO_RES=true; shift ;;
     --engine)      ENGINE="$2"; shift 2 ;;
+    --mode)        MODE="$2"; shift 2 ;;
     -h|--help)     usage ;;
     -*)            echo "Error: Unknown option $1" >&2; usage ;;
     *)             INPUT_FILE="$1"; shift ;;
@@ -109,6 +124,17 @@ case "$ENGINE" in
     ;;
 esac
 
+# Empty MODE is deliberately accepted here (it means --mode was never given):
+# run_jadx below only appends -m when MODE is non-empty, so jadx keeps its
+# own default rather than this script hardcoding one on jadx's behalf.
+case "$MODE" in
+  ""|auto|restructure|simple|fallback) ;;
+  *)
+    echo "Error: Unknown mode '$MODE'. Use auto, restructure, simple, or fallback." >&2
+    exit 1
+    ;;
+esac
+
 BASENAME=$(basename "$INPUT_FILE" ".$ext_lower")
 INPUT_FILE_ABS=$(realpath "$INPUT_FILE")
 
@@ -137,6 +163,10 @@ run_jadx() {
   args+=("-d" "$out_dir")
   [[ "$DEOBF" == true ]] && args+=("--deobf")
   [[ "$NO_RES" == true ]] && args+=("--no-res")
+  # -m is only appended when --mode was actually given (MODE non-empty).
+  # Hardcoding "-m auto" here would silently diverge the moment jadx changes
+  # what its own default means — letting jadx decide is the whole point.
+  [[ -n "$MODE" ]] && args+=("-m" "$MODE")
   args+=("--show-bad-code")
   args+=("$INPUT_FILE_ABS")
 
