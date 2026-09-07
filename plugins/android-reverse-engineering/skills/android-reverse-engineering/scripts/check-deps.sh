@@ -131,6 +131,40 @@ for _dep_id in $(tool_list optional); do
         missing_optional+=("adb")
       fi
       ;;
+    python3)
+      # --- Optional: python3 (D7) ---
+      # recover-kotlin-names.sh and lookup-name.sh are internally embedded
+      # Python, but nothing declared that dependency before this row — they
+      # failed outright on a machine with no working interpreter while this
+      # script reported everything fine.
+      #
+      # Resolving via tool_resolve only proves that something NAMED python3
+      # exists on PATH or a candidate — it does not prove there is a working
+      # interpreter behind it. On Windows, `python3` is commonly the
+      # Microsoft Store's app-execution-alias stub: it resolves via PATH,
+      # but running it exits non-zero with no version output at all (typing
+      # `python3` at a prompt with no args instead opens the Store). A bare
+      # existence check cannot tell that apart from a real interpreter, so
+      # this actually runs one.
+      py3_purpose=$(tool_field python3 purpose)
+      if py3_bin=$(tool_resolve python3); then
+        if py3_check_output=$("$py3_bin" -c 'import sys; print(sys.version_info[0])' 2>/dev/null); then
+          py3_check_status=0
+        else
+          py3_check_status=$?
+        fi
+        if [[ $py3_check_status -eq 0 ]] && [[ "$py3_check_output" == "3" ]]; then
+          py3_full=$("$py3_bin" -c 'import platform; print(platform.python_version())' 2>/dev/null) || py3_full="3"
+          echo "[OK] python3 $py3_full detected"
+        else
+          echo "[MISSING] python3 was found at $py3_bin but is not a working interpreter (exit $py3_check_status) — optional, $py3_purpose. On Windows, a \"python3\" that opens the Microsoft Store instead of running is this stub, not a real interpreter."
+          missing_optional+=("python3")
+        fi
+      else
+        echo "[MISSING] python3 not found (optional — $py3_purpose)"
+        missing_optional+=("python3")
+      fi
+      ;;
     *)
       # Generic fallback for a future optional row tools.psv gains before
       # this script grows a dedicated case for it.

@@ -42,6 +42,7 @@ A Claude Code skill that decompiles Android packages (APK, XAPK, APKM, APKS, AAB
 **Optional (recommended):**
 
 - [Vineflower](https://github.com/Vineflower/vineflower) — better output on complex Java code (accepts `.jar`, `.aar`, and `.class` input only; jadx handles everything else, including APKs)
+- **`python3`** — required specifically by `recover-kotlin-names.sh` and `lookup-name.sh` (Kotlin name recovery, below), which are internally embedded Python. Not needed for decompiling, fingerprinting, or API extraction. On Windows, typing `python3` with nothing installed opens the Microsoft Store instead of running anything; `check-deps.sh`/`check-deps.ps1` actually execute the resolved interpreter to catch that stub rather than trusting the name on PATH.
 
 See `plugins/android-reverse-engineering/skills/android-reverse-engineering/references/setup-guide.md` for detailed installation instructions, including manual fallback tools (dex2jar, apktool) for edge cases jadx doesn't cover.
 
@@ -140,6 +141,12 @@ original fully-qualified names at runtime. This skill mines those
 class-name map. On a typical app it recovers ~100 % of the
 `*Repository` / `*ViewModel` / `*UseCase` / `*Impl` classes you actually want to
 read.
+
+> **Requires `python3`**: both scripts below are internally embedded Python.
+> Run `check-deps.sh`/`check-deps.ps1` first and confirm `python3` shows
+> `[OK]`. On Windows, a `python3` that opens the Microsoft Store instead of
+> running is the app-execution-alias stub, not a real interpreter — see
+> setup-guide.md.
 
 ```bash
 # 1. Build the mapping from the decompiled sources

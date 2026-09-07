@@ -99,5 +99,70 @@ out6=$(HOME="$home6" PATH="$emptybin6:$PATH" ADB_BIN="$adb_target" "${BASH:-bash
 assert_contains "$out6" "[OK] adb detected (optional)" \
   "[all] Task 3: check-deps.sh resolves adb via the ADB_BIN env override with no adb on PATH (proves it consumes tools.sh's tool_resolve rather than a hardcoded PATH-only check)"
 
+# --- Task 2 (2.1.0, D7): python3 must be declared as a dependency, with
+# stub detection that actually runs the resolved interpreter rather than
+# trusting a name on PATH. This development machine's own `python3` is a
+# Windows Store app-execution-alias stub: it resolves via PATH/command -v
+# but exits 49 with no version output when actually run — verified above
+# by hand against the real environment. A detection that stopped at "is
+# python3 on PATH" would report this machine's own stub as [OK].
+#
+# All three cases filter this machine's real PATH down to directories that
+# do NOT contain a python3/python3.exe/python3.bat/python3.cmd (the same
+# technique test-decompile.sh's D10/D14 use for jadx), so resolution is
+# genuinely forced through each stub rather than accidentally finding this
+# machine's own real python3 stub.
+path_no_py3=""
+_pnp_oldifs="$IFS"
+IFS=':'
+for _pnp_dir in $PATH; do
+  IFS="$_pnp_oldifs"
+  if [ -n "$_pnp_dir" ] && [ ! -f "$_pnp_dir/python3" ] && [ ! -f "$_pnp_dir/python3.exe" ] && [ ! -f "$_pnp_dir/python3.bat" ] && [ ! -f "$_pnp_dir/python3.cmd" ]; then
+    path_no_py3="${path_no_py3:+$path_no_py3:}$_pnp_dir"
+  fi
+  IFS=':'
+done
+IFS="$_pnp_oldifs"
+
+# Case 1: no python3 anywhere (no PATH match, no PYTHON3_BIN, no
+# candidates — tools.psv's python3 row has none) -> [MISSING].
+out_py3_case1=$(PATH="$path_no_py3" env -u PYTHON3_BIN "${BASH:-bash}" "$SCRIPT" 2>&1)
+py3_line_case1=$(printf '%s\n' "$out_py3_case1" | grep -E '^\[(OK|MISSING)\].*python3' || true)
+assert_contains "$py3_line_case1" "[MISSING] python3" \
+  "[all] Task2 case 1: check-deps.sh reports [MISSING] python3 when nothing named python3 resolves at all"
+
+# Case 2 (the core of this task): a python3 ON PATH that is a stub — exits
+# non-zero and prints no version output, exactly like this machine's real
+# Windows Store stub reproduced above. Must NOT be reported [OK]; a
+# detection reduced to `command -v python3 && echo OK` would report this
+# as installed.
+bin_py3_stub=$(new_tmpdir)
+make_stub_bin "$bin_py3_stub" python3 'exit 49'
+
+out_py3_case2=$(PATH="$bin_py3_stub:$path_no_py3" env -u PYTHON3_BIN "${BASH:-bash}" "$SCRIPT" 2>&1)
+py3_line_case2=$(printf '%s\n' "$out_py3_case2" | grep -E '^\[(OK|MISSING)\].*python3' || true)
+assert_not_contains "$py3_line_case2" "[OK]" \
+  "[all] Task2 case 2: a python3 stub that exits non-zero with no version output must NOT be reported [OK]"
+assert_contains "$py3_line_case2" "[MISSING]" \
+  "[all] Task2 case 2: the python3 stub is reported [MISSING] (an explicit stub message), not silently accepted"
+
+# Case 3: a genuinely working python3 -> [OK] with its version. Simulates
+# the two distinct -c invocations check-deps.sh actually makes (the
+# sys.version_info[0] check, then the platform.python_version() display
+# call) by branching on which code string it was handed.
+bin_py3_ok=$(new_tmpdir)
+make_stub_bin "$bin_py3_ok" python3 'code="$2"
+case "$code" in
+  *version_info*) echo "3" ;;
+  *python_version*) echo "3.11.4" ;;
+  *) echo "3" ;;
+esac
+exit 0'
+
+out_py3_case3=$(PATH="$bin_py3_ok:$path_no_py3" env -u PYTHON3_BIN "${BASH:-bash}" "$SCRIPT" 2>&1)
+py3_line_case3=$(printf '%s\n' "$out_py3_case3" | grep -E '^\[(OK|MISSING)\].*python3' || true)
+assert_contains "$py3_line_case3" "[OK] python3 3.11.4" \
+  "[all] Task2 case 3: a genuinely working python3 interpreter is reported [OK] with its version"
+
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"

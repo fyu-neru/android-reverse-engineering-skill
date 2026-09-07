@@ -230,6 +230,48 @@ jadx -d output app-merged.apk
 
 ## Optional Tools
 
+### python3 (required by recover-kotlin-names.sh and lookup-name.sh)
+
+`recover-kotlin-names.sh` and `lookup-name.sh` (Phase 3.5, Kotlin name
+recovery) are internally embedded Python scripts — `python3` must be a
+working interpreter for either one to run at all. It is declared as an
+**optional** dependency in `tools.psv`/`check-deps.sh`/`check-deps.ps1` only
+because most of this plugin's workflow (Phases 0–2, 4–5) never touches
+Python; it becomes a **required** dependency starting 2.2.0, once the
+analysis scripts migrate onto this same resolution layer.
+
+```bash
+# Ubuntu/Debian
+sudo apt install python3
+
+# macOS (usually already present)
+brew install python3
+
+# Windows
+winget install Python.Python.3
+```
+
+**The stub trap on Windows:** if Python was never installed, typing
+`python3` (or `python`) at a prompt does not fail with "command not found"
+— it silently launches the Microsoft Store's listing for Python instead of
+running anything. That app-execution-alias stub still resolves via `PATH`
+(`command -v python3` / `Get-Command python3` both find it), so a
+dependency check that only asks "is python3 on PATH" reports this stub as
+installed. Actually running it exits non-zero (49) immediately, with no
+version string on stdout — `check-deps.sh`/`check-deps.ps1` detect this by
+executing `python3 -c "import sys; print(sys.version_info[0])"` and
+requiring both a zero exit code and `3` as the output, so this exact stub
+is reported `[MISSING]`, not `[OK]`.
+
+### Verify
+
+```bash
+python3 -c "import sys; print(sys.version_info)"
+```
+
+If this opens the Microsoft Store instead of printing a version tuple, no
+interpreter is installed yet — install one with the commands above.
+
 ### adb (Android Debug Bridge)
 
 Useful for pulling APKs directly from a connected Android device.
@@ -268,3 +310,5 @@ adb pull /data/app/com.example.app-xxxx/base.apk ./app.apk
 | Vineflower hangs on a method | Use `-mpm=60` to set a 60-second timeout per method |
 | Vineflower JAR not found | Set `VINEFLOWER_JAR` env variable to the full path of the JAR |
 | dex2jar fails with `ZipException` | The APK may have a non-standard ZIP structure — try `jadx` instead |
+| Typing `python3` opens the Microsoft Store | No real Python interpreter is installed — that's the Windows app-execution-alias stub, not python. Install Python 3 (see "python3" above), then re-run `check-deps` |
+| `recover-kotlin-names.sh`/`lookup-name.sh` fail immediately | Both are embedded Python scripts; run `check-deps.sh`/`check-deps.ps1` and confirm `python3` shows `[OK]`, not `[MISSING]` |
