@@ -786,5 +786,56 @@ CMD
     "[win] Task1: decompile.ps1's invalid -Mode error names the accepted values"
 fi
 
+# --- D10: decompile_single's early `return 1` paths (jadx/vineflower/both
+# engine failures) used to skip restoring INPUT_FILE_ABS/ext_lower — the
+# restore only ran on the fall-through success path at the very end of the
+# function. Extracts the REAL decompile_single() body out of decompile.sh
+# (so this proves what actually ships, not a hand-copied rewrite of it)
+# and sources it standalone with run_jadx/run_vineflower/print_structure
+# stubbed, so a failure can be forced deterministically with no real
+# jadx/APK involved. Calls it twice — first forced to fail, then forced to
+# succeed — and checks the GLOBAL state after the SECOND call: this is the
+# part that would stay wrong on the pre-fix code even though the second
+# call itself "succeeds", because it restores to whatever the first call
+# leaked rather than to the true pre-existing values. Checking only the
+# first call's own exit status (a bare non-zero return) would pass before
+# and after the fix, since `return 1` itself was never in question.
+d10_extract=$(new_tmpdir)
+awk '/^decompile_single\(\) \{/,/^\}$/' "$SCRIPT" > "$d10_extract/decompile_single.sh"
+
+d10_out=$(
+  run_jadx() { return "$D10_STUB_STATUS"; }
+  run_vineflower() { return "$D10_STUB_STATUS"; }
+  print_structure() { :; }
+  # shellcheck disable=SC1090
+  . "$d10_extract/decompile_single.sh"
+
+  ENGINE=jadx
+  INPUT_FILE_ABS="/original/input.apk"
+  ext_lower="original-ext"
+
+  D10_STUB_STATUS=1
+  decompile_single "/tmp/bad-file.xyz" "/tmp/out-bad" "" >/dev/null 2>&1
+  echo "FIRST_CALL_STATUS:$?"
+
+  D10_STUB_STATUS=0
+  decompile_single "/tmp/good-file.abc" "/tmp/out-good" "" >/dev/null 2>&1
+  echo "SECOND_CALL_STATUS:$?"
+
+  echo "FINAL_INPUT_FILE_ABS:$INPUT_FILE_ABS"
+  echo "FINAL_EXT_LOWER:$ext_lower"
+)
+
+first_status_d10=$(printf '%s\n' "$d10_out" | grep '^FIRST_CALL_STATUS:' | cut -d: -f2)
+final_input_d10=$(printf '%s\n' "$d10_out" | grep '^FINAL_INPUT_FILE_ABS:' | cut -d: -f2)
+final_ext_d10=$(printf '%s\n' "$d10_out" | grep '^FINAL_EXT_LOWER:' | cut -d: -f2)
+
+assert_equals "$first_status_d10" "1" \
+  "[all] D10: the first, forced-to-fail decompile_single call itself returns non-zero (precondition for the check below)"
+assert_equals "$final_input_d10" "/original/input.apk" \
+  "[all] D10: after that failing call, the next decompile_single call still restores the true original INPUT_FILE_ABS rather than the failed call's leaked override"
+assert_equals "$final_ext_d10" "original-ext" \
+  "[all] D10: after that failing call, the next decompile_single call still restores the true original ext_lower rather than the failed call's leaked override"
+
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"

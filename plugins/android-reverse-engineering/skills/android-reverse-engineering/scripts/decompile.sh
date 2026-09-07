@@ -368,6 +368,14 @@ decompile_single() {
   local file_abs="$1"
   local out_dir="$2"
   local label="$3"
+  # D10: every path through this function funnels into this single rc
+  # rather than `return`ing directly, so INPUT_FILE_ABS/ext_lower are
+  # restored exactly once below, on every path (success AND failure)
+  # instead of only on the success path. A `return 1` here used to skip
+  # the restore, leaking this call's file_abs/extension into whatever the
+  # caller (or the next decompile_single call, for split/bundled APKs)
+  # read next.
+  local rc=0
 
   # Temporarily override INPUT_FILE_ABS for run_jadx/run_vineflower
   local saved_input="$INPUT_FILE_ABS"
@@ -390,9 +398,8 @@ decompile_single() {
       fi
       print_structure "$out_dir/sources" "jadx"
       if [[ $jadx_status -eq 1 ]]; then
-        return 1
-      fi
-      if [[ $jadx_status -eq 2 ]]; then
+        rc=1
+      elif [[ $jadx_status -eq 2 ]]; then
         echo "jadx completed with warnings but produced usable output."
       fi
       ;;
@@ -405,9 +412,8 @@ decompile_single() {
       fi
       print_structure "$out_dir/sources" "vineflower"
       if [[ $ff_status -eq 1 ]]; then
-        return 1
-      fi
-      if [[ $ff_status -eq 2 ]]; then
+        rc=1
+      elif [[ $ff_status -eq 2 ]]; then
         echo "Vineflower completed with warnings but produced usable output."
       fi
       ;;
@@ -421,58 +427,61 @@ decompile_single() {
         jadx_status=$?
       fi
       if [[ $jadx_status -eq 1 ]]; then
-        return 1
-      fi
-      if [[ $jadx_status -eq 2 ]]; then
-        echo "Continuing to Vineflower because jadx produced usable output despite warnings."
-      fi
-      echo
-      echo "--- Pass 2: Vineflower ---"
-      if run_vineflower "$out_dir/vineflower"; then
-        ff_status=0
+        rc=1
       else
-        ff_status=$?
-      fi
-      if [[ $ff_status -eq 1 ]]; then
-        return 1
-      fi
-      if [[ $ff_status -eq 2 ]]; then
-        echo "Continuing with Vineflower output because it produced usable sources despite warnings."
-      fi
-
-      print_structure "$out_dir/jadx/sources" "jadx"
-      print_structure "$out_dir/vineflower/sources" "vineflower"
-
-      echo
-      echo "=== Comparison ==="
-      local jadx_count=0 ff_count=0
-      if [[ -d "$out_dir/jadx/sources" ]]; then
-        jadx_count=$(find "$out_dir/jadx/sources" -name "*.java" | wc -l)
-      fi
-      if [[ -d "$out_dir/vineflower/sources" ]]; then
-        ff_count=$(find "$out_dir/vineflower/sources" -name "*.java" | wc -l)
-      fi
-      echo "jadx:        $jadx_count Java files"
-      echo "Vineflower:  $ff_count Java files"
-
-      if [[ -d "$out_dir/jadx/sources" ]]; then
-        local jadx_error_files
-        local jadx_errors
-        jadx_error_files=$(grep -rl 'JADX WARNING\|JADX WARN\|JADX ERROR\|Code decompiled incorrectly' "$out_dir/jadx/sources" 2>/dev/null || true)
-        if [[ -n "$jadx_error_files" ]]; then
-          jadx_errors=$(printf '%s\n' "$jadx_error_files" | wc -l)
-        else
-          jadx_errors=0
+        if [[ $jadx_status -eq 2 ]]; then
+          echo "Continuing to Vineflower because jadx produced usable output despite warnings."
         fi
-        echo "jadx files with warnings/errors: $jadx_errors"
+        echo
+        echo "--- Pass 2: Vineflower ---"
+        if run_vineflower "$out_dir/vineflower"; then
+          ff_status=0
+        else
+          ff_status=$?
+        fi
+        if [[ $ff_status -eq 1 ]]; then
+          rc=1
+        else
+          if [[ $ff_status -eq 2 ]]; then
+            echo "Continuing with Vineflower output because it produced usable sources despite warnings."
+          fi
+
+          print_structure "$out_dir/jadx/sources" "jadx"
+          print_structure "$out_dir/vineflower/sources" "vineflower"
+
+          echo
+          echo "=== Comparison ==="
+          local jadx_count=0 ff_count=0
+          if [[ -d "$out_dir/jadx/sources" ]]; then
+            jadx_count=$(find "$out_dir/jadx/sources" -name "*.java" | wc -l)
+          fi
+          if [[ -d "$out_dir/vineflower/sources" ]]; then
+            ff_count=$(find "$out_dir/vineflower/sources" -name "*.java" | wc -l)
+          fi
+          echo "jadx:        $jadx_count Java files"
+          echo "Vineflower:  $ff_count Java files"
+
+          if [[ -d "$out_dir/jadx/sources" ]]; then
+            local jadx_error_files
+            local jadx_errors
+            jadx_error_files=$(grep -rl 'JADX WARNING\|JADX WARN\|JADX ERROR\|Code decompiled incorrectly' "$out_dir/jadx/sources" 2>/dev/null || true)
+            if [[ -n "$jadx_error_files" ]]; then
+              jadx_errors=$(printf '%s\n' "$jadx_error_files" | wc -l)
+            else
+              jadx_errors=0
+            fi
+            echo "jadx files with warnings/errors: $jadx_errors"
+          fi
+          echo
+          echo "Tip: compare specific classes between jadx/ and vineflower/ to pick the better output."
+        fi
       fi
-      echo
-      echo "Tip: compare specific classes between jadx/ and vineflower/ to pick the better output."
       ;;
   esac
 
   INPUT_FILE_ABS="$saved_input"
   ext_lower="$saved_ext"
+  return "$rc"
 }
 
 # --- Run ---

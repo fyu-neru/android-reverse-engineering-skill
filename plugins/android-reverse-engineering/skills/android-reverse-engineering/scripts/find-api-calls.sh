@@ -240,7 +240,12 @@ if [[ "$SEARCH_ALL" == true || "$SEARCH_URLS" == true ]]; then
   STRICT_URL='https?://(([0-9]{1,3}(\.[0-9]{1,3}){3}|[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})(:[0-9]{1,5})?(/[^"<>[:space:]]*)?|[A-Za-z0-9-]+(:[0-9]{1,5}(/[^"<>[:space:]]*)?|/[^"<>[:space:]]*))'
 
   TMP="$(mktemp)"
-  trap 'rm -f "$TMP"' EXIT
+  HOSTS_TMP=""
+  # D11: HOSTS_TMP is created a few lines further down (mktemp again), but
+  # the trap is set here so a failure anywhere in between — before that
+  # second mktemp runs — still has a defined (empty, harmless) $HOSTS_TMP
+  # to expand under `set -u`, and once it exists this same trap covers it.
+  trap 'rm -f "$TMP" "$HOSTS_TMP"' EXIT
   # Extraction (STRICT_URL) is deliberately permissive; this awk pass drops the
   # residual Kotlin-stdlib dictionary noise WITHOUT losing the high-signal
   # shapes a strict-only regex discards (IPs, apex domains, internal hosts).
@@ -277,7 +282,23 @@ if [[ "$SEARCH_ALL" == true || "$SEARCH_URLS" == true ]]; then
 
   if [[ -f "$DENYLIST" ]]; then
     # Build a single combined regex from the denylist (one line each).
-    DENY_REGEX="$(grep -vE '^\s*(#|$)' "$DENYLIST" | tr '\n' '|' | sed 's/|$//')"
+    #
+    # D9: a denylist line's dots are hostname separators, not "match any
+    # character" — but ERE gives '.' the latter meaning. Entries in
+    # third_party_hosts.txt already write their own dots pre-escaped
+    # (\.google\.com$), which is what has kept this from biting in
+    # practice, but the join below trusted that discipline instead of
+    # enforcing it: a plain, unescaped hostname added later (or any line
+    # whose dot survived a careless edit) would make '.' match ANY
+    # character at that position — e.g. a denylisted "api.foo.com" would
+    # also wrongly match "apixfoo1com". Escape every dot that is not
+    # already escaped, leaving deliberate regex syntax ($, (), |, ^ used
+    # for anchoring/alternation in the existing entries) untouched: swap
+    # already-escaped dots (\.) out to a placeholder, escape every
+    # remaining bare dot, then swap the placeholder back.
+    DENY_REGEX="$(grep -vE '^\s*(#|$)' "$DENYLIST" \
+        | sed -E 's/\\\./@@ESCAPED_DOT@@/g; s/\./\\./g; s/@@ESCAPED_DOT@@/\\./g' \
+        | tr '\n' '|' | sed 's/|$//')"
     THIRD_HOSTS=$(grep -E "$DENY_REGEX" "$HOSTS_TMP" || true)
     FIRST_HOSTS=$(grep -vE "$DENY_REGEX" "$HOSTS_TMP" || true)
   else
