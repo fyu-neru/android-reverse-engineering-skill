@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/Tools.ps1
+FIND:        return @($java.Path, '-jar', $resolved.Path)
+REPLACE:        return @('java', '-jar', $resolved.Path)
+EXPECT:Get-ToolArgv: kind=jar's java element comes from Resolve-Tool -Id 'java', not a hard-coded 'java' literal

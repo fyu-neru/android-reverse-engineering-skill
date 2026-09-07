@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/tools.sh
+FIND:    line="${line%$'\r'}"
+REPLACE:    :
+EXPECT:tools.sh: tool_field strips the trailing \r from a CRLF-saved tools.psv's last column and returns the real value

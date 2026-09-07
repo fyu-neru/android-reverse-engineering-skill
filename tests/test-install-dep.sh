@@ -358,8 +358,17 @@ out7=$(HOME="$home7" PATH="$bin7:$PATH" "${BASH:-bash}" "$SCRIPT" vineflower 2>&
 
 assert_contains "$out7" "$home7/.bashrc still exports FERNFLOWER_JAR_PATH" \
   "[all] install-dep.sh vineflower warns when the profile still exports the old FERNFLOWER_JAR_PATH name"
-assert_contains "$out7" "VINEFLOWER_JAR" \
-  "[all] install-dep.sh vineflower's profile warning names the new VINEFLOWER_JAR variable to migrate to"
+# Extract just the stale-profile warning line itself, not the whole run's
+# output: $out7 ALSO contains an unrelated "VINEFLOWER_JAR set to ..." line
+# from the normal install-success path further down, which would make this
+# assertion pass even if the warning text itself never mentioned
+# VINEFLOWER_JAR at all — exactly the vacuous shape this test used to have
+# (it matched the whole run's output and would have passed identically
+# before and after the warning text itself was fixed to name the new
+# variable).
+warning_line7=$(printf '%s\n' "$out7" | grep 'still exports FERNFLOWER_JAR_PATH' || true)
+assert_contains "$warning_line7" "VINEFLOWER_JAR" \
+  "[all] install-dep.sh vineflower's profile warning line itself names the new VINEFLOWER_JAR variable to migrate to"
 
 cleanup_tmpdirs
 echo "SUMMARY $TESTS_RUN $TESTS_FAILED"

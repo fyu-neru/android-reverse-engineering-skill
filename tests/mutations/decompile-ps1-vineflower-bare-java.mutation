@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.ps1
+FIND:    $vfArgv = Get-ToolArgv -Id 'vineflower'
+REPLACE:    $vfArgv = @('java', '-jar', (Resolve-Tool -Id 'vineflower').Path)
+EXPECT:D21: decompile.ps1 -Engine vineflower resolves java through JAVA_BIN, not a hard-coded 'java' literal

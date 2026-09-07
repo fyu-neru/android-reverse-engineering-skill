@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.ps1
+FIND:        return 2
+REPLACE:        return 1
+EXPECT:D19: decompile.ps1 exits zero when jadx exits non-zero but still produces Java output (partial success)

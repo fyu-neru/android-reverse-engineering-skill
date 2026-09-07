@@ -344,10 +344,10 @@ add_to_profile() {
 # it — this makes that stale line visible instead of leaving two exports
 # for the same purpose sitting side by side unexplained.
 warn_stale_profile_var() {
-  local old_name="$1" profile
+  local old_name="$1" new_name="$2" profile
   for profile in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
     if [[ -f "$profile" ]] && grep -qF "$old_name" "$profile" 2>/dev/null; then
-      info "Warning: $profile still exports $old_name, which is no longer read (renamed in 2.0.0). Remove that line to avoid a stale, confusing export."
+      info "Warning: $profile still exports $old_name, which is no longer read (renamed to $new_name in 2.0.0). Remove that line to avoid a stale, confusing export."
     fi
   done
 }
@@ -485,7 +485,7 @@ WRAPPER
   export PATH="$HOME/.local/bin:$PATH"
   export VINEFLOWER_JAR="$install_dir/vineflower.jar"
   add_to_profile 'export PATH="$HOME/.local/bin:$PATH"'
-  warn_stale_profile_var "FERNFLOWER_JAR_PATH"
+  warn_stale_profile_var "FERNFLOWER_JAR_PATH" "VINEFLOWER_JAR"
   add_to_profile "export VINEFLOWER_JAR=\"$install_dir/vineflower.jar\""
 
   ok "Vineflower $version installed to $install_dir/vineflower.jar"

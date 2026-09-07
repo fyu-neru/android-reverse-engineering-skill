@@ -475,6 +475,135 @@ BAT
     "[win] D18: decompile.ps1 exits non-zero when FERNFLOWER_JAR_PATH is set (renamed to VINEFLOWER_JAR in 2.0.0)"
   assert_contains "$ps18_out" "FERNFLOWER_JAR_PATH 已於 2.0.0 更名為 VINEFLOWER_JAR" \
     "[win] D18: decompile.ps1 prints the exact migration hint when FERNFLOWER_JAR_PATH is set"
+
+  # --- D19/D20 (review round 2, C2): decompile.ps1 never read
+  # $LASTEXITCODE at all - Invoke-Jadx returned $true whenever jadx was
+  # merely FOUND, regardless of what it actually did. Reproduced against
+  # the pre-fix script: a jadx stub exiting 3 and writing nothing still
+  # printed "=== Decompilation complete ===" with exit code 0, while
+  # decompile.sh's equivalent scenario correctly exits 1 with "Error: jadx
+  # failed with status 3 and produced no Java output." These two cases
+  # mirror decompile.sh's own 0/1/2 status contract on the PowerShell side.
+  path_no_real_jadx=""
+  _pnj_oldifs="$IFS"
+  IFS=':'
+  for _pnj_dir in $PATH; do
+    IFS="$_pnj_oldifs"
+    if [ -n "$_pnj_dir" ] && [ ! -f "$_pnj_dir/jadx" ] && [ ! -f "$_pnj_dir/jadx.bat" ] && [ ! -f "$_pnj_dir/jadx.cmd" ]; then
+      path_no_real_jadx="${path_no_real_jadx:+$path_no_real_jadx:}$_pnj_dir"
+    fi
+    IFS=':'
+  done
+  IFS="$_pnj_oldifs"
+
+  # D19: jadx exits non-zero BUT writes Java output - decompile.ps1 must
+  # treat this as partial success (status 2): exit 0, still print the
+  # completion banner, but name the non-zero exit as a warning.
+  work19=$(new_tmpdir)
+  bin19=$(new_tmpdir)
+  cat > "$bin19/jadx.cmd" <<'CMD'
+@echo off
+setlocal enabledelayedexpansion
+set OUT=
+:loop
+if "%~1"=="" goto done
+if "%PREV%"=="-d" set OUT=%~1
+set PREV=%~1
+shift
+goto loop
+:done
+mkdir "%OUT%\sources" 2>nul
+echo class A {} > "%OUT%\sources\A.java"
+exit /b 3
+CMD
+
+  touch "$work19/app.apk"
+  native_ps1_19="$SCRIPT_DIR/decompile.ps1"
+  if command -v cygpath >/dev/null 2>&1; then
+    native_ps1_19=$(cygpath -w "$SCRIPT_DIR/decompile.ps1")
+  fi
+
+  out19=$(cd "$work19" && PATH="$bin19:$path_no_real_jadx" \
+          "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_19" app.apk 2>&1)
+  status19=$?
+
+  assert_equals "$status19" "0" \
+    "[win] D19: decompile.ps1 exits zero when jadx exits non-zero but still produces Java output (partial success)"
+  assert_contains "$out19" "Warning: jadx exited with status 3 after writing 1 Java files; treating this as partial success." \
+    "[win] D19: decompile.ps1 names the non-zero jadx exit status as a partial-success warning"
+  assert_contains "$out19" "=== Decompilation complete ===" \
+    "[win] D19: decompile.ps1 still prints the completion banner on partial success"
+
+  # D20: jadx exits non-zero AND writes zero Java files - a hard failure
+  # (status 1): exit 1, name the error, and never print the completion
+  # banner. This is the exact scenario the C2 finding reproduced.
+  work20=$(new_tmpdir)
+  bin20=$(new_tmpdir)
+  cat > "$bin20/jadx.cmd" <<'CMD'
+@echo off
+exit /b 3
+CMD
+
+  touch "$work20/app.apk"
+  native_ps1_20="$SCRIPT_DIR/decompile.ps1"
+  if command -v cygpath >/dev/null 2>&1; then
+    native_ps1_20=$(cygpath -w "$SCRIPT_DIR/decompile.ps1")
+  fi
+
+  out20=$(cd "$work20" && PATH="$bin20:$path_no_real_jadx" \
+          "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_20" app.apk 2>&1)
+  status20=$?
+
+  assert_equals "$status20" "1" \
+    "[win] D20: decompile.ps1 exits non-zero when jadx exits non-zero and produces zero Java output"
+  assert_contains "$out20" "Error: jadx failed with status 3 and produced no Java output." \
+    "[win] D20: decompile.ps1 names the exit status and the zero-output failure"
+  assert_not_contains "$out20" "=== Decompilation complete ===" \
+    "[win] D20: decompile.ps1 does not print the completion banner after a hard jadx failure"
+
+  # --- D21 (review round 2, C1): decompile.ps1's vineflower engine must
+  # resolve java through JAVA_BIN/tools.psv (via Get-ToolArgv), not call a
+  # bare `java` literal. Reproduced against the pre-fix script: with
+  # JAVA_BIN pointed at a stub and nothing named "java" on PATH, the old
+  # decompile.ps1 printed "Running: java -jar ..." (ignoring JAVA_BIN
+  # entirely) while decompile.sh's equivalent honoured it — verbatim the
+  # check-deps-says-yes/decompile-says-no divergence this release exists
+  # to eliminate.
+  work21=$(new_tmpdir)
+  bin21=$(new_tmpdir)
+  home21=$(new_tmpdir)
+  mkdir -p "$home21/.local/share/vineflower"
+  touch "$home21/.local/share/vineflower/vineflower.jar"
+  cat > "$bin21/java-stub.cmd" <<'CMD'
+@echo off
+echo JAVA_STUB_RAN: %*
+CMD
+
+  touch "$work21/lib.jar"
+  native_work21="$work21"
+  native_home21="$home21"
+  native_ps1_21="$SCRIPT_DIR/decompile.ps1"
+  native_javastub21="$bin21/java-stub.cmd"
+  if command -v cygpath >/dev/null 2>&1; then
+    native_work21=$(cygpath -w "$work21")
+    native_home21=$(cygpath -w "$home21")
+    native_ps1_21=$(cygpath -w "$SCRIPT_DIR/decompile.ps1")
+    native_javastub21=$(cygpath -w "$bin21/java-stub.cmd")
+  fi
+
+  # No PATH restriction needed: env_override (JAVA_BIN) is checked before
+  # the PATH probe in the resolution order, so JAVA_BIN wins regardless of
+  # what else is on PATH.
+  out21=$(cd "$work21" && USERPROFILE="$native_home21" \
+          JAVA_BIN="$native_javastub21" \
+          env -u FERNFLOWER_JAR_PATH -u VINEFLOWER_JAR \
+          "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_21" \
+          -Engine vineflower "$native_work21\lib.jar" 2>&1)
+
+  assert_contains "$out21" "$native_javastub21" \
+    "[win] D21: decompile.ps1 -Engine vineflower resolves java through JAVA_BIN, not a hard-coded 'java' literal"
+  assert_contains "$out21" "JAVA_STUB_RAN" \
+    "[win] D21: decompile.ps1 -Engine vineflower actually invokes the JAVA_BIN-resolved java stub"
 fi
 
 cleanup_tmpdirs

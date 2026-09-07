@@ -448,6 +448,33 @@ while [ "$_jc_idx" -lt "${#jadx_cand_list[@]}" ]; do
 done
 
 # =====================================================================
+# Group 11 (2.0.0 fix wave, I2) — a tools.psv saved with CRLF line endings
+# must not silently break tools.sh's last-column lookups. `IFS= read -r
+# header` keeps a trailing \r on the line it reads, so before this fix the
+# header's last field was "purpose\r", which never equals the bareword
+# "purpose" a caller asks for - every last-column lookup failed outright,
+# even though the row's data itself was perfectly readable. Only
+# .gitattributes normalization prevented this in practice; neither reader
+# guarded against it directly before this fix. Tools.ps1's regex-based
+# line splitter ([regex]::Split($raw, "\r\n|\n")) was never affected -
+# this is a bash-only defect.
+# =====================================================================
+crlf_root=$(new_tmpdir)
+crlf_lib="$crlf_root/skills/android-reverse-engineering/scripts/lib"
+mkdir -p "$crlf_lib"
+printf 'id|required|platform|kind|probe|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose\r\nwidget|required|all|path|-|-|-|-|-|-|-|Widget purpose text\r\n' \
+  > "$crlf_lib/tools.psv"
+
+crlf_purpose=$(CLAUDE_PLUGIN_ROOT="$crlf_root" TOOLS_SH_PATH="$TOOLS_SH" "${BASH:-bash}" -c \
+  '. "$TOOLS_SH_PATH"; tool_field widget purpose')
+crlf_status=$?
+
+assert_equals "$crlf_status" "0" \
+  "[all] tools.sh: tool_field succeeds on a CRLF-saved tools.psv's last column, instead of failing outright"
+assert_equals "$crlf_purpose" "Widget purpose text" \
+  "[all] tools.sh: tool_field strips the trailing \\r from a CRLF-saved tools.psv's last column and returns the real value"
+
+# =====================================================================
 # Group 7 — PowerShell runtime consistency: the same fixture fed to both
 # readers, compared verbatim (no trim/case-fold/sort — §6.2 shape 4).
 # Only runs where pwsh or powershell exists; SKIP is visibly distinct
@@ -728,6 +755,151 @@ EOF
     "[win] Resolve-Tool reports Kind=cli when a jar-kind tool is actually found via the PATH probe (not wrapped in java -jar)"
   assert_contains "$pcli_out" "pcli-cli-stub-zzz.cmd" \
     "[win] Resolve-Tool's probe-matched Path names the CLI found on PATH, not the jar candidate"
+
+  # =====================================================================
+  # Group 9 (2.0.0 fix wave, C1) — Get-ToolArgv is Tools.ps1's counterpart
+  # to tools.sh's tool_argv, added because decompile.ps1 had nowhere to
+  # get a resolved java from and was calling the bare `java` command
+  # directly (ignoring JAVA_BIN and every tools.psv candidate). This is
+  # the [win] counterpart to Group 4's bash tool_argv assertions above:
+  # kind=path is a one-element argv; kind=jar is (java, '-jar', <jar
+  # path>) with java resolved through Resolve-Tool -Id 'java', not a
+  # hard-coded 'java' literal; a jar-kind tool actually found via the PATH
+  # probe produces a one-element argv (direct exec, not java -jar).
+  # =====================================================================
+  g9_root=$(new_tmpdir)
+  g9_lib="$g9_root/skills/android-reverse-engineering/scripts/lib"
+  mkdir -p "$g9_lib"
+  g9_home=$(new_tmpdir)
+  native_g9_home=$(to_native_path "$g9_home")
+  touch "$g9_home/g9-widget-candidate" "$g9_home/g9-java-candidate" \
+        "$g9_home/g9-gadget-candidate.jar" "$g9_home/g9-gadgetcli-candidate.jar"
+
+  cat > "$g9_lib/tools.psv" <<PSV
+id|required|platform|kind|probe|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
+g9widget|required|all|path|-|-|$native_g9_home/g9-widget-candidate|-|-|-|-|Get-ToolArgv path-kind test
+java|required|all|path|-|-|$native_g9_home/g9-java-candidate|-|-|-|-|Get-ToolArgv java-resolution test
+g9gadget|optional|all|jar|-|-|$native_g9_home/g9-gadget-candidate.jar|-|-|-|-|Get-ToolArgv jar-kind test
+g9gadgetcli|optional|all|jar|g9-gadgetcli-stub-zzz|-|$native_g9_home/g9-gadgetcli-candidate.jar|-|-|-|-|Get-ToolArgv probe-matched-jar test
+PSV
+
+  g9_bin=$(new_tmpdir)
+  native_g9_bin=$(to_native_path "$g9_bin")
+  cat > "$g9_bin/g9-gadgetcli-stub-zzz.cmd" <<'CMD'
+@echo off
+exit /b 0
+CMD
+
+  native_g9_root=$(to_native_path "$g9_root")
+
+  g9_script_dir=$(new_tmpdir)
+  g9_script="$g9_script_dir/g9-check.ps1"
+  cat > "$g9_script" <<'EOF'
+$ErrorActionPreference = 'Stop'
+$env:PATH = $env:STUB_BIN_DIR
+. $env:TOOLS_PS1_PATH
+$w = Get-ToolArgv -Id 'g9widget'
+Write-Output ('WIDGET_COUNT=' + $w.Count)
+Write-Output ('WIDGET_0=' + $w[0])
+
+$g = Get-ToolArgv -Id 'g9gadget'
+Write-Output ('GADGET_COUNT=' + $g.Count)
+Write-Output ('GADGET_0=' + $g[0])
+Write-Output ('GADGET_1=' + $g[1])
+Write-Output ('GADGET_2=' + $g[2])
+
+$c = Get-ToolArgv -Id 'g9gadgetcli'
+Write-Output ('GADGETCLI_COUNT=' + $c.Count)
+Write-Output ('GADGETCLI_0=' + $c[0])
+EOF
+
+  g9_out=$(CLAUDE_PLUGIN_ROOT="$native_g9_root" TOOLS_PS1_PATH="$native_tools_ps1" \
+    STUB_BIN_DIR="$native_g9_bin" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$g9_script" 2>&1 | tr -d '\r')
+
+  assert_contains "$g9_out" "WIDGET_COUNT=1" \
+    "[win] Get-ToolArgv: kind=path produces a single-element argv"
+  assert_contains "$g9_out" "WIDGET_0=$native_g9_home/g9-widget-candidate" \
+    "[win] Get-ToolArgv: kind=path's single element is the resolved tool path"
+
+  assert_contains "$g9_out" "GADGET_COUNT=3" \
+    "[win] Get-ToolArgv: kind=jar produces a three-element argv (java, -jar, <path>)"
+  assert_contains "$g9_out" "GADGET_0=$native_g9_home/g9-java-candidate" \
+    "[win] Get-ToolArgv: kind=jar's java element comes from Resolve-Tool -Id 'java', not a hard-coded 'java' literal"
+  assert_contains "$g9_out" "GADGET_1=-jar" \
+    "[win] Get-ToolArgv: kind=jar's second element is the literal -jar flag"
+  assert_contains "$g9_out" "GADGET_2=$native_g9_home/g9-gadget-candidate.jar" \
+    "[win] Get-ToolArgv: kind=jar's third element is the resolved jar path"
+
+  assert_contains "$g9_out" "GADGETCLI_COUNT=1" \
+    "[win] Get-ToolArgv: kind=jar found via PATH probe produces a single-element argv (direct exec, not java -jar)"
+  assert_contains "$g9_out" "g9-gadgetcli-stub-zzz.cmd" \
+    "[win] Get-ToolArgv: kind=jar's probe-matched element is the CLI found on PATH, not the jar candidate"
+
+  # =====================================================================
+  # Group 10 (2.0.0 fix wave, I1) — an empty element in a candidates list
+  # (e.g. a stray ";;") must be skipped, not thrown on. Reproduced against
+  # the pre-fix Tools.ps1: Expand-ToolPlaceholders declared its $Value
+  # parameter as [Parameter(Mandatory=$true)][string] with no
+  # AllowEmptyString, which PowerShell rejects outright for an empty-string
+  # argument ("Cannot bind argument to parameter 'Value' because it is an
+  # empty string.") - a terminating parameter-binding error regardless of
+  # $ErrorActionPreference, aborting the whole calling script before
+  # Resolve-Tool could ever reach a later candidate (here, a second
+  # nonexistent one) that tools.sh's equivalent loop would harmlessly skip
+  # past (`[ -f "" ]` is simply false, not fatal).
+  # =====================================================================
+  g10_root=$(new_tmpdir)
+  g10_lib="$g10_root/skills/android-reverse-engineering/scripts/lib"
+  mkdir -p "$g10_lib"
+  cat > "$g10_lib/tools.psv" <<'PSV'
+id|required|platform|kind|probe|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
+g10widget|required|all|path|-|-|/nonexistent/g10-a;;/nonexistent/g10-b|-|-|-|-|empty-candidate-element test
+PSV
+  native_g10_root=$(to_native_path "$g10_root")
+
+  g10_script_dir=$(new_tmpdir)
+  g10_script="$g10_script_dir/g10-check.ps1"
+  cat > "$g10_script" <<'EOF'
+$ErrorActionPreference = 'Stop'
+. $env:TOOLS_PS1_PATH
+try {
+    $r = Resolve-Tool -Id 'g10widget'
+    if ($null -eq $r) { Write-Output 'RESOLVE=<NULL>' } else { Write-Output ('RESOLVE=' + $r.Path) }
+} catch {
+    Write-Output ('THREW=' + $_.Exception.Message)
+}
+EOF
+
+  g10_out=$(CLAUDE_PLUGIN_ROOT="$native_g10_root" TOOLS_PS1_PATH="$native_tools_ps1" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$g10_script" 2>&1 | tr -d '\r')
+
+  assert_contains "$g10_out" "RESOLVE=<NULL>" \
+    "[win] Resolve-Tool skips an empty element in a candidates list (e.g. a stray ';;') instead of throwing, and continues to report the tool unresolved"
+  assert_not_contains "$g10_out" "THREW=" \
+    "[win] Resolve-Tool does not raise a parameter-binding error on an empty candidates-list element"
+
+  # Direct unit-level guard on Expand-ToolPlaceholders itself, independent
+  # of Resolve-Tool's own empty-element skip: even if that skip were ever
+  # removed or bypassed, Expand-ToolPlaceholders must still accept an
+  # empty string rather than reject it as a missing Mandatory argument.
+  g10b_script_dir=$(new_tmpdir)
+  g10b_script="$g10b_script_dir/g10b-check.ps1"
+  cat > "$g10b_script" <<'EOF'
+$ErrorActionPreference = 'Stop'
+. $env:TOOLS_PS1_PATH
+try {
+    $r = Expand-ToolPlaceholders -Value ''
+    Write-Output ('EXPANDED=[' + $r + ']')
+} catch {
+    Write-Output ('THREW=' + $_.Exception.Message)
+}
+EOF
+  g10b_out=$(TOOLS_PS1_PATH="$native_tools_ps1" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$g10b_script" 2>&1 | tr -d '\r')
+
+  assert_contains "$g10b_out" "EXPANDED=[]" \
+    "[win] Expand-ToolPlaceholders accepts an empty string ([AllowEmptyString()]) instead of rejecting it as a missing Mandatory argument"
 fi
 
 cleanup_tmpdirs

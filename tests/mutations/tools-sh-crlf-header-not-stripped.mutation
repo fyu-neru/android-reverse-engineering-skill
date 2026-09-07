@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/tools.sh
+FIND:  header="${header%$'\r'}"
+REPLACE:  :
+EXPECT:tools.sh: tool_field succeeds on a CRLF-saved tools.psv's last column, instead of failing outright

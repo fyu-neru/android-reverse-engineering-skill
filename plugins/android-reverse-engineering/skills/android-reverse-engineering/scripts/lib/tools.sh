@@ -27,6 +27,16 @@ tool_field() {
   [ -f "$psv" ] || return 1
 
   IFS= read -r header < "$psv"
+  # A tools.psv saved with CRLF line endings (e.g. by a Windows editor, with
+  # no .gitattributes normalization in effect) leaves a trailing \r on every
+  # line `read` returns — bash's `read -r` strips the trailing newline but
+  # not a preceding \r. Left in place, the header's LAST field becomes
+  # "purpose\r", which never equals the bareword "purpose" a caller asks
+  # for, so every last-column lookup fails outright on Unix while
+  # PowerShell's regex-based line splitter (\r\n|\n) is unaffected. Strip it
+  # with a bash-3.2-safe parameter expansion (no case-modification, no
+  # external tool) so both readers tolerate the same file.
+  header="${header%$'\r'}"
   local idx=0 found=-1 col
   local oldifs="$IFS" oldopts="$-"
   IFS='|'
@@ -41,6 +51,7 @@ tool_field() {
 
   local line
   while IFS= read -r line || [ -n "$line" ]; do
+    :
     case "$line" in
       "$want_id"'|'*) ;;
       *) continue ;;
@@ -134,6 +145,16 @@ tool_resolve() {
     set -f
     for c in $candidates; do
       IFS="$oldifs"
+      # An empty element (e.g. a stray ";;" in the candidates list) is
+      # skipped explicitly rather than relying on `[ -f "" ]` happening to
+      # be false — see the matching comment in Tools.ps1's Resolve-Tool,
+      # where PowerShell's Test-Path throws on an empty path under
+      # $ErrorActionPreference = 'Stop' and needs the same skip to avoid
+      # aborting before a later candidate this reader would still find.
+      if [ -z "$c" ]; then
+        IFS=';'
+        continue
+      fi
       cand=$(_tools_expand "$c")
       if [ -f "$cand" ]; then
         case "$oldopts" in *f*) ;; *) set +f ;; esac

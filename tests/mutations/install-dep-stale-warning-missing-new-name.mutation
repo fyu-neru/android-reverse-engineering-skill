@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/install-dep.sh
+FIND:      info "Warning: $profile still exports $old_name, which is no longer read (renamed to $new_name in 2.0.0). Remove that line to avoid a stale, confusing export."
+REPLACE:      info "Warning: $profile still exports $old_name, which is no longer read (renamed in 2.0.0). Remove that line to avoid a stale, confusing export."
+EXPECT:install-dep.sh vineflower's profile warning line itself names the new VINEFLOWER_JAR variable to migrate to

@@ -41,7 +41,7 @@ function Get-ToolsLines {
 }
 
 function Expand-ToolPlaceholders {
-    param([Parameter(Mandatory = $true)][string]$Value)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
     # Expands {HOME} and {LOCALAPPDATA} in a candidate path.
     #
     # {LOCALAPPDATA} exists so a single candidates list can carry
@@ -173,6 +173,17 @@ function Resolve-Tool {
     if ($null -eq $candidates) { return $null }
     if ($candidates -cne '-') {
         foreach ($c in ($candidates -split ';')) {
+            # An empty element (e.g. a stray ";;" in the candidates list)
+            # must be skipped, not fed onward: bash's equivalent loop in
+            # tools.sh's tool_resolve harmlessly no-ops on an empty
+            # candidate (`[ -f "" ]` is simply false), but here
+            # Test-Path -LiteralPath '' throws under this project's
+            # $ErrorActionPreference = 'Stop', aborting the whole calling
+            # script before it can reach a later candidate bash would still
+            # find. Skipping explicitly keeps both readers' behavior
+            # identical instead of relying on Test-Path to fail the same
+            # way bash's `[ -f ]` does.
+            if (-not $c) { continue }
             $expanded = Expand-ToolPlaceholders -Value $c
             if (Test-Path -LiteralPath $expanded -PathType Leaf) {
                 return [pscustomobject]@{ Kind = $kind; Path = $expanded }
@@ -181,6 +192,40 @@ function Resolve-Tool {
     }
 
     return $null
+}
+
+# Get-ToolArgv -Id <id>
+# Mirrors tools.sh's tool_argv: returns the full argv (a string array) needed
+# to run the tool named by <id>, or $null if it cannot be resolved. For
+# kind=path (per Resolve-Tool's disambiguated Kind, not the static tools.psv
+# column - a probe match on a jar-kind id is reported as Kind='cli' by
+# Resolve-Tool itself) this is a single-element array holding the resolved
+# executable. For kind=jar it is a three-element array (java, '-jar', <jar
+# path>), with java resolved through Resolve-Tool -Id 'java' rather than a
+# hard-coded 'java' literal - this is the C1 fix: before this function
+# existed, decompile.ps1 had nowhere to get a resolved java from and called
+# the bare 'java' command directly, which ignores JAVA_BIN and every
+# tools.psv candidate entirely.
+function Get-ToolArgv {
+    param([Parameter(Mandatory = $true)][string]$Id)
+
+    $resolved = Resolve-Tool -Id $Id
+    if (-not $resolved) { return $null }
+
+    if ($resolved.Kind -eq 'jar') {
+        $java = Resolve-Tool -Id 'java'
+        if (-not $java) { return $null }
+        return @($java.Path, '-jar', $resolved.Path)
+    }
+
+    # The unary comma forces this single-element array onto the pipeline
+    # as one array object rather than unrolled as a bare string: `return
+    # @($x)` on its own, with exactly one element, gets collapsed by
+    # PowerShell's pipeline output handling into the scalar $x itself, so
+    # a caller's `$argv[0]` would silently index into the STRING (its
+    # first character) instead of the array. Same reasoning as
+    # Split-PsvRow's `return , @()` above.
+    return , @($resolved.Path)
 }
 
 # Get-ToolList [-Want required|optional]

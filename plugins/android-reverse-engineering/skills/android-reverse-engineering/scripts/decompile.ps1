@@ -118,6 +118,13 @@ if (-not $Output) {
 }
 
 # --- jadx decompilation ---
+# Returns an integer status mirroring decompile.sh's run_jadx: 0 (clean
+# success), 1 (hard failure - no Java output), 2 (jadx exited non-zero but
+# still produced usable output - partial success). Before the C2 fix this
+# function returned a bare $true whenever jadx was merely FOUND, regardless
+# of $LASTEXITCODE or whether it wrote anything at all - a failed
+# decompile still reported success and the caller still printed
+# "=== Decompilation complete ===".
 function Invoke-Jadx {
     param([string]$OutDir, [string]$FileAbs, [string]$FileExt)
 
@@ -130,7 +137,7 @@ function Invoke-Jadx {
     $jadxCmd = Resolve-Tool -Id 'jadx'
     if (-not $jadxCmd) {
         Write-Host "Error: jadx is not installed or not in PATH." -ForegroundColor Red
-        return $false
+        return 1
     }
 
     $jadxArgs = @('-d', $OutDir)
@@ -148,17 +155,36 @@ function Invoke-Jadx {
     # real jadx output into $decompileOk instead of ever reaching the
     # console.
     & $jadxCmd.Path @jadxArgs | Out-Host
+    # The C2 fix: read jadx's own exit code. Piping to a cmdlet (Out-Host)
+    # does not clear $LASTEXITCODE - it still reflects the native
+    # executable's own status right after the pipeline statement runs.
+    $jadxExit = $LASTEXITCODE
+    if ($null -eq $jadxExit) { $jadxExit = 0 }
 
     $sourcesDir = Join-Path $OutDir 'sources'
+    $count = 0
+    Write-Host "jadx output: $sourcesDir\"
     if (Test-Path $sourcesDir) {
         $count = (Get-ChildItem -Path $sourcesDir -Recurse -Filter '*.java').Count
-        Write-Host "jadx output: $sourcesDir\"
         Write-Host "Java files decompiled by jadx: $count"
     }
-    return $true
+
+    if ($jadxExit -eq 0) { return 0 }
+
+    if ($count -gt 0) {
+        Write-Host "Warning: jadx exited with status $jadxExit after writing $count Java files; treating this as partial success." -ForegroundColor Yellow
+        return 2
+    }
+
+    Write-Host "Error: jadx failed with status $jadxExit and produced no Java output." -ForegroundColor Red
+    return 1
 }
 
 # --- Vineflower decompilation ---
+# Returns an integer status with the same 0/1/2 meaning as Invoke-Jadx
+# above (mirrors decompile.sh's run_vineflower). Before the C2 fix this
+# always returned $true once Vineflower was found, even when no result jar
+# appeared and zero .java files were ever written.
 function Invoke-Vineflower {
     param([string]$OutDir, [string]$FileAbs, [string]$FileExt)
 
@@ -171,14 +197,21 @@ function Invoke-Vineflower {
         Write-Host "Error: The vineflower engine only decompiles .jar, .aar, and .class files." -ForegroundColor Red
         Write-Host "Got '.$FileExt'. dex2jar conversion has been removed - jadx reads DEX/APK-family files natively and produces better results."
         Write-Host "Use -Engine jadx for .apk, .xapk, .apkm, .apks, .aab, .dex, and .zip files."
-        return $false
+        return 1
     }
 
-    $ffCmd = Resolve-Tool -Id 'vineflower'
-    if (-not $ffCmd) {
+    # The C1 fix: Get-ToolArgv (Tools.ps1) resolves the full invocation,
+    # including java for a kind=jar tool via Resolve-Tool -Id 'java' -
+    # mirroring tools.sh's tool_argv, which decompile.sh already used
+    # here. Before this, the kind=jar branch below called the bare `java`
+    # command directly, ignoring JAVA_BIN and every tools.psv candidate
+    # entirely - the exact check-deps-says-yes/decompile-says-no
+    # divergence this release exists to eliminate.
+    $vfArgv = Get-ToolArgv -Id 'vineflower'
+    if (-not $vfArgv) {
         Write-Host "Error: Vineflower not found." -ForegroundColor Red
         Write-Host "Set VINEFLOWER_JAR or see references/setup-guide.md"
-        return $false
+        return 1
     }
 
     New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
@@ -191,32 +224,71 @@ function Invoke-Vineflower {
     $ffArgs += $jarToDecompile
     $ffArgs += $OutDir
 
+    $vfExe = $vfArgv[0]
+    $vfBaseArgs = @()
+    if ($vfArgv.Length -gt 1) { $vfBaseArgs = @($vfArgv[1..($vfArgv.Length - 1)]) }
+    $fullArgs = @($vfBaseArgs) + $ffArgs
+
     # Piped through Out-Host for the same reason as the jadx invocation
     # above: Invoke-DecompileSingle's caller now captures ITS return
     # value, and a bare native-command call here would have Vineflower's
     # console output silently folded into that captured boolean instead
     # of ever being displayed.
-    if ($ffCmd.Kind -eq 'cli') {
-        Write-Host "Running: $($ffCmd.Path) $($ffArgs -join ' ')"
-        & $ffCmd.Path @ffArgs | Out-Host
-    } else {
-        Write-Host "Running: java -jar $($ffCmd.Path) $($ffArgs -join ' ')"
-        & java -jar $ffCmd.Path @ffArgs | Out-Host
-    }
+    Write-Host "Running: $($vfArgv -join ' ') $($ffArgs -join ' ')"
+    & $vfExe @fullArgs | Out-Host
+    # The C2 fix: see the matching comment in Invoke-Jadx above.
+    $ffExit = $LASTEXITCODE
+    if ($null -eq $ffExit) { $ffExit = 0 }
 
     # Vineflower outputs a JAR containing .java files — extract it
     $resultJar = Join-Path $OutDir ([IO.Path]::GetFileName($jarToDecompile))
+    $sourcesDir = Join-Path $OutDir 'sources'
     if (Test-Path $resultJar) {
-        $sourcesDir = Join-Path $OutDir 'sources'
         New-Item -ItemType Directory -Path $sourcesDir -Force | Out-Null
         Expand-Archive -Path $resultJar -DestinationPath $sourcesDir -Force
         Remove-Item $resultJar -Force
-        $count = (Get-ChildItem -Path $sourcesDir -Recurse -Filter '*.java').Count
-        Write-Host "Vineflower output: $sourcesDir\"
-        Write-Host "Java files decompiled by Vineflower: $count"
     }
 
-    return $true
+    New-Item -ItemType Directory -Path $sourcesDir -Force | Out-Null
+    $count = (Get-ChildItem -Path $sourcesDir -Recurse -Filter '*.java' -ErrorAction SilentlyContinue).Count
+
+    # Vineflower may write sources directly into the destination folder
+    # tree instead of a result jar. Mirrors decompile.sh's direct-folder-
+    # output fallback, which had no PowerShell counterpart before this fix.
+    if ($count -eq 0) {
+        $directEntries = @(Get-ChildItem -Path $OutDir -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne 'sources' })
+        $directCount = 0
+        foreach ($entry in $directEntries) {
+            if ($entry.PSIsContainer) {
+                $directCount += (Get-ChildItem -Path $entry.FullName -Recurse -Filter '*.java' -ErrorAction SilentlyContinue).Count
+            } elseif ($entry.Extension -eq '.java') {
+                $directCount += 1
+            }
+        }
+        if ($directCount -gt 0) {
+            foreach ($entry in $directEntries) {
+                Move-Item -Path $entry.FullName -Destination $sourcesDir -Force
+            }
+            $count = (Get-ChildItem -Path $sourcesDir -Recurse -Filter '*.java' -ErrorAction SilentlyContinue).Count
+        }
+    }
+
+    if ($count -gt 0) {
+        Write-Host "Vineflower output: $sourcesDir\"
+        Write-Host "Java files decompiled by Vineflower: $count"
+        if ($ffExit -ne 0) {
+            Write-Host "Warning: Vineflower exited with status $ffExit after writing $count Java files; treating this as partial success." -ForegroundColor Yellow
+            return 2
+        }
+        return 0
+    }
+
+    Write-Host "Error: Vineflower produced no Java output." -ForegroundColor Red
+    if ($ffExit -ne 0) {
+        Write-Host "Error: Vineflower exited with status $ffExit." -ForegroundColor Red
+    }
+    return 1
 }
 
 # --- Summary helper ---
@@ -273,6 +345,11 @@ function Show-Structure {
 }
 
 # --- Decompile a single file ---
+# Returns $true on overall success (including a partial-success engine
+# status of 2 - a warning, not a failure) and $false only on a hard engine
+# failure (status 1). Mirrors decompile.sh's decompile_single, whose only
+# externally-visible failure signal is the same: a hard per-engine status
+# of 1 stops the run; a 2 is logged and treated as success.
 function Invoke-DecompileSingle {
     param([string]$FileAbs, [string]$OutDir, [string]$Label)
 
@@ -282,35 +359,51 @@ function Invoke-DecompileSingle {
         Write-Host "=== Decompiling $Label (engine: $Engine) ==="
     }
 
-    # Both branches below capture the engine functions' boolean return
-    # value into a variable rather than leaving the call as a bare
-    # statement. In PowerShell, a function's return value that is neither
-    # captured nor piped becomes part of the CALLER's own output stream -
-    # so an uncaptured `$false`/`$true` here doesn't just vanish, it
-    # surfaces as a stray "False"/"True" line on stdout (via this
-    # function's own uncaptured return) AND is unavailable for deciding
-    # whether decompilation actually succeeded. That was harmless while
-    # nothing downstream checked it; it became load-bearing once the
-    # vineflower engine started refusing input and needed its failure to
-    # actually reach the caller's exit code (see the C1 fix below).
+    # Each engine function now returns an integer status - 0 (success), 1
+    # (hard failure), 2 (partial success with warnings) - captured into a
+    # variable rather than left as a bare statement. In PowerShell, a
+    # function's return value that is neither captured nor piped becomes
+    # part of the CALLER's own output stream - so an uncaptured return
+    # here doesn't just vanish, it surfaces as a stray integer line on
+    # stdout (via this function's own uncaptured return) AND is
+    # unavailable for deciding whether decompilation actually succeeded.
+    # That was harmless while nothing downstream checked it; it became
+    # load-bearing once the vineflower engine started refusing input (the
+    # original C1 fix) and, now, once a failed engine run needed its exit
+    # code checked too (the C2 fix).
     $engineOk = $true
 
     switch ($Engine) {
         'jadx' {
-            $engineOk = Invoke-Jadx -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
+            $jadxStatus = Invoke-Jadx -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
             Show-Structure (Join-Path $OutDir 'sources') 'jadx'
+            if ($jadxStatus -eq 1) { return $false }
+            if ($jadxStatus -eq 2) {
+                Write-Host "jadx completed with warnings but produced usable output."
+            }
         }
         'vineflower' {
-            $engineOk = Invoke-Vineflower -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
+            $ffStatus = Invoke-Vineflower -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
             Show-Structure (Join-Path $OutDir 'sources') 'vineflower'
+            if ($ffStatus -eq 1) { return $false }
+            if ($ffStatus -eq 2) {
+                Write-Host "Vineflower completed with warnings but produced usable output."
+            }
         }
         'both' {
             Write-Host "--- Pass 1: jadx ---"
-            $jadxOk = Invoke-Jadx -OutDir (Join-Path $OutDir 'jadx') -FileAbs $FileAbs -FileExt $fileExt
+            $jadxStatus = Invoke-Jadx -OutDir (Join-Path $OutDir 'jadx') -FileAbs $FileAbs -FileExt $fileExt
+            if ($jadxStatus -eq 1) { return $false }
+            if ($jadxStatus -eq 2) {
+                Write-Host "Continuing to Vineflower because jadx produced usable output despite warnings."
+            }
             Write-Host ""
             Write-Host "--- Pass 2: Vineflower ---"
-            $ffOk = Invoke-Vineflower -OutDir (Join-Path $OutDir 'vineflower') -FileAbs $FileAbs -FileExt $fileExt
-            $engineOk = $jadxOk -and $ffOk
+            $ffStatus = Invoke-Vineflower -OutDir (Join-Path $OutDir 'vineflower') -FileAbs $FileAbs -FileExt $fileExt
+            if ($ffStatus -eq 1) { return $false }
+            if ($ffStatus -eq 2) {
+                Write-Host "Continuing with Vineflower output because it produced usable sources despite warnings."
+            }
 
             Show-Structure (Join-Path $OutDir 'jadx\sources') 'jadx'
             Show-Structure (Join-Path $OutDir 'vineflower\sources') 'vineflower'
