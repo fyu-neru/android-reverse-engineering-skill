@@ -26,6 +26,11 @@ Run the dependency check:
 bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/check-deps.sh
 ```
 
+On Windows (PowerShell):
+```powershell
+& "${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/check-deps.ps1"
+```
+
 Parse the output looking for `INSTALL_REQUIRED:` and `INSTALL_OPTIONAL:` lines.
 
 **If required dependencies are missing**, install them one by one:
@@ -33,6 +38,12 @@ Parse the output looking for `INSTALL_REQUIRED:` and `INSTALL_OPTIONAL:` lines.
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/install-dep.sh java
 bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/install-dep.sh jadx
+```
+
+On Windows (PowerShell):
+```powershell
+& "${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/install-dep.ps1" java
+& "${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/install-dep.ps1" jadx
 ```
 
 The install script auto-detects the OS and installs without sudo when possible (user-local install to `~/.local/`). If sudo is needed, it will prompt — if the user declines or sudo is unavailable, the script prints exact manual instructions (exit code 2). Show those instructions to the user and stop.
@@ -51,10 +62,20 @@ Run the decompile script on the target file. Choose the engine based on the inpu
   bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.sh <file>
   ```
 
+  On Windows (PowerShell):
+  ```powershell
+  & "${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.ps1" <file>
+  ```
+
 - **JAR/AAR/class** and Vineflower is available → prefer vineflower for better Java output:
 
   ```bash
   bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.sh --engine vineflower <file>
+  ```
+
+  On Windows (PowerShell):
+  ```powershell
+  & "${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.ps1" -Engine vineflower <file>
   ```
 
 - **If jadx output has warnings** or the user wants the best quality → run both and compare:
@@ -63,10 +84,20 @@ Run the decompile script on the target file. Choose the engine based on the inpu
   bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.sh --engine both <file>
   ```
 
+  On Windows (PowerShell):
+  ```powershell
+  & "${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.ps1" -Engine both <file>
+  ```
+
 For obfuscated apps (if the user mentions it or you detect single-letter package names), add `--deobf`:
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.sh --deobf <file>
+```
+
+On Windows (PowerShell):
+```powershell
+& "${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/decompile.ps1" -Deobf <file>
 ```
 
 ### Step 4: Analyze structure
