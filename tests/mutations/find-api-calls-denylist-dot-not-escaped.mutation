@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/find-api-calls.sh
+FIND:        | sed -E 's/\\\./@@ESCAPED_DOT@@/g; s/\./\\./g; s/@@ESCAPED_DOT@@/\\./g' \
+REPLACE:        | cat \
+EXPECT:D9: that same host is NOT misclassified as third-party
