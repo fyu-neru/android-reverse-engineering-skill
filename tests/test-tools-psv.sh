@@ -474,6 +474,27 @@ assert_equals "$crlf_status" "0" \
 assert_equals "$crlf_purpose" "Widget purpose text" \
   "[all] tools.sh: tool_field strips the trailing \\r from a CRLF-saved tools.psv's last column and returns the real value"
 
+# The assertion above alone is not a reliable guard for the per-ROW \r
+# strip specifically (as opposed to the header \r strip): some shells'
+# `$(...)` command substitution runs through a pipe that can itself
+# normalize a trailing "\r\n" to "\n" in transit (observed on MSYS/Git-Bash
+# on Windows), which would make this assertion pass even with the row-level
+# strip removed, silently masking that specific regression. Redirecting to
+# a real file instead of capturing through a pipe/command-substitution
+# sidesteps that normalization and checks the actual bytes tool_field wrote
+# — the same property, checked in a way that cannot be quietly
+# short-circuited by a pipe's own text-mode translation.
+crlf_out_dir=$(new_tmpdir)
+CLAUDE_PLUGIN_ROOT="$crlf_root" TOOLS_SH_PATH="$TOOLS_SH" "${BASH:-bash}" -c \
+  '. "$TOOLS_SH_PATH"; tool_field widget purpose' > "$crlf_out_dir/purpose.out"
+crlf_out_bytes=$(wc -c < "$crlf_out_dir/purpose.out" | tr -d ' ')
+# Expected: "Widget purpose text" (19 bytes) + a single trailing "\n" (1
+# byte, from tool_field's own `printf '%s\n'`) = 20 bytes total, with no
+# embedded \r. If the row-level strip were removed, the file would instead
+# hold 21 bytes ("...text" + "\r" + "\n").
+assert_equals "$crlf_out_bytes" "20" \
+  "[all] tools.sh: tool_field's raw output bytes (checked via file redirection, not a pipe) contain no embedded \\r from a CRLF-saved row"
+
 # =====================================================================
 # Group 7 — PowerShell runtime consistency: the same fixture fed to both
 # readers, compared verbatim (no trim/case-fold/sort — §6.2 shape 4).

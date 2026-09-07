@@ -51,7 +51,7 @@ tool_field() {
 
   local line
   while IFS= read -r line || [ -n "$line" ]; do
-    :
+    line="${line%$'\r'}"
     case "$line" in
       "$want_id"'|'*) ;;
       *) continue ;;
