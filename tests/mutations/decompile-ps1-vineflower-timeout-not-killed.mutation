@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.ps1
+FIND:            & taskkill.exe /PID $ffProc.Id /T /F *> $null
+REPLACE:            $null = $null
+EXPECT:D22: decompile.ps1 actually terminates the Vineflower process on timeout, not merely printing the timeout message

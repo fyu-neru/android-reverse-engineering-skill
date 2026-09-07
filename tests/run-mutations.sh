@@ -25,11 +25,96 @@ if ! "${BASH:-bash}" "$TESTS_DIR/run-tests.sh" >/dev/null 2>&1; then
   exit 1
 fi
 
+# PER_MUTATION_TIMEOUT_SECONDS — the safety net this file exists to add.
+# A mutation is a deliberate defect: it can make the code under test hang
+# instead of merely fail (e.g. a kill call replaced with a no-op leaves a
+# sleeping stub process running with nothing left to reap it). A hung
+# mutation is worse than a survived one — a survivor is a reported result,
+# a hang wedges this entire script (and whatever CI job or terminal is
+# waiting on it) with no result at all. A normal run of run-tests.sh here
+# takes well under two minutes; 300s is comfortably above that while still
+# recovering in a bounded time when something hangs.
+PER_MUTATION_TIMEOUT_SECONDS=90
+
 total=0
 survived=0
 survivors=""
+timed_out=0
+timed_out_names=""
 skipped=0
 skipped_names=""
+
+# run_suite_with_timeout OUTFILE — runs run-tests.sh with output captured
+# to OUTFILE, bounded by PER_MUTATION_TIMEOUT_SECONDS, and returns 124 if
+# the bound was hit. Two layers, in preference order:
+#
+#   1. `timeout` (GNU coreutils, or busybox's) if present on PATH.
+#      `-k 10` gives it a follow-up SIGKILL 10s after the initial TERM,
+#      for a child that ignores TERM.
+#   2. A portable fallback for a shell without `timeout` at all (some
+#      macOS/BSD installs, minimal containers): background the suite,
+#      race it against a `sleep` watcher, and manually signal whichever
+#      loses.
+#
+# Either way, the suite runs as a job-control process GROUP (via `set -m`,
+# which — unlike an ordinary backgrounded job in a non-interactive script —
+# gives the backgrounded job its own pgid equal to its pid), and on
+# timeout the signal is sent to the whole group (`kill -- -$pid`), not
+# just the immediate run-tests.sh process. run-tests.sh spawns its own
+# children (pwsh, java stubs, taskkill, ...); signaling only the leader
+# would leave exactly the kind of orphaned hung child this net exists to
+# clean up.
+run_suite_with_timeout() {
+  outfile="$1"
+  had_monitor=0
+  case "$-" in
+    *m*) had_monitor=1 ;;
+  esac
+  set -m
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout -k 10 "$PER_MUTATION_TIMEOUT_SECONDS" \
+      "${BASH:-bash}" "$TESTS_DIR/run-tests.sh" >"$outfile" 2>&1 &
+    pid=$!
+    wait "$pid"
+    status=$?
+    if [ "$had_monitor" -eq 0 ]; then set +m; fi
+    # GNU/busybox timeout exits 124 on its own timeout; normalize any
+    # 137/143 (already-SIGKILL/SIGTERM'd by timeout's own -k) to 124 too,
+    # so callers only need to check for one value.
+    if [ "$status" -eq 137 ] || [ "$status" -eq 143 ]; then
+      status=124
+    fi
+    return "$status"
+  fi
+
+  # No `timeout` binary: implement the same bound by hand.
+  "${BASH:-bash}" "$TESTS_DIR/run-tests.sh" >"$outfile" 2>&1 &
+  pid=$!
+  (
+    sleep "$PER_MUTATION_TIMEOUT_SECONDS"
+    kill -TERM -- "-$pid" 2>/dev/null
+    sleep 10
+    kill -KILL -- "-$pid" 2>/dev/null
+  ) &
+  watcher=$!
+
+  wait "$pid" 2>/dev/null
+  status=$?
+
+  # The watcher is still sleeping in the common case (the suite finished
+  # well under the bound) - stop it so it doesn't fire late against a
+  # since-reused pid, then reap it so it doesn't linger as a zombie.
+  kill "$watcher" 2>/dev/null
+  wait "$watcher" 2>/dev/null
+
+  if [ "$had_monitor" -eq 0 ]; then set +m; fi
+
+  if [ "$status" -ge 128 ]; then
+    status=124
+  fi
+  return "$status"
+}
 
 # bash_version_satisfies_lt_4_4 — true when the bash currently running this
 # script is older than 4.4. Some defects (the ${arr[@]+"${arr[@]}"} empty-
@@ -60,6 +145,7 @@ bash_version_satisfies_lt_4_4() {
 current_target=""
 current_backup=""
 current_out=""
+current_run_out=""
 
 cleanup_mutation_state() {
   if [ -n "$current_backup" ] && [ -f "$current_backup" ] && [ -n "$current_target" ]; then
@@ -68,9 +154,13 @@ cleanup_mutation_state() {
   if [ -n "$current_out" ] && [ -f "$current_out" ]; then
     rm -f "$current_out"
   fi
+  if [ -n "$current_run_out" ] && [ -f "$current_run_out" ]; then
+    rm -f "$current_run_out"
+  fi
   current_target=""
   current_backup=""
   current_out=""
+  current_run_out=""
 }
 trap cleanup_mutation_state EXIT
 trap 'cleanup_mutation_state; exit 130' INT
@@ -188,9 +278,22 @@ for m in "$TESTS_DIR"/mutations/*.mutation; do
     continue
   fi
 
-  mutation_output=$("${BASH:-bash}" "$TESTS_DIR/run-tests.sh" 2>&1)
+  run_out="$target.mutation-run-out"
+  current_run_out="$run_out"
+  run_suite_with_timeout "$run_out"
   mutation_status=$?
-  if [ "$mutation_status" -eq 0 ]; then
+  mutation_output=$(cat "$run_out" 2>/dev/null)
+  rm -f "$run_out"
+  current_run_out=""
+
+  if [ "$mutation_status" -eq 124 ]; then
+    echo "  TIMEOUT  - $name: suite did not finish within ${PER_MUTATION_TIMEOUT_SECONDS}s of the defect"
+    echo "             being reintroduced. Treated as a framework error, not a kill: a hang"
+    echo "             proves nothing about whether the guard catches this defect, and this"
+    echo "             mutation is NOT counted as killed. The run continues with the next one."
+    timed_out=$((timed_out + 1)); timed_out_names="$timed_out_names $name"
+    survived=$((survived + 1)); survivors="$survivors $name"
+  elif [ "$mutation_status" -eq 0 ]; then
     echo "  SURVIVED - $name: suite stayed GREEN with the defect reintroduced"
     survived=$((survived + 1)); survivors="$survivors $name"
   else
@@ -223,9 +326,12 @@ done
 
 echo
 echo "===================================="
-echo "Mutations: $total   Survived: $survived   Skipped: $skipped"
+echo "Mutations: $total   Survived: $survived   Skipped: $skipped   Timed out: $timed_out"
 if [ "$skipped" -ne 0 ]; then
   echo "Skipped (REQUIRES not met by this shell, $BASH_VERSION):$skipped_names"
+fi
+if [ "$timed_out" -ne 0 ]; then
+  echo "Timed out (framework error - suite hung past ${PER_MUTATION_TIMEOUT_SECONDS}s, not proven killed):$timed_out_names"
 fi
 if [ "$survived" -ne 0 ]; then
   echo "Surviving mutations (these defects are not actually guarded):$survivors"

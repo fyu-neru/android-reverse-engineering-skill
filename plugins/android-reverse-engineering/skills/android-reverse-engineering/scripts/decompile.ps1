@@ -235,10 +235,69 @@ function Invoke-Vineflower {
     # console output silently folded into that captured boolean instead
     # of ever being displayed.
     Write-Host "Running: $($vfArgv -join ' ') $($ffArgs -join ' ')"
-    & $vfExe @fullArgs | Out-Host
-    # The C2 fix: see the matching comment in Invoke-Jadx above.
-    $ffExit = $LASTEXITCODE
-    if ($null -eq $ffExit) { $ffExit = 0 }
+
+    # Cross-platform-divergence fix (pre-2.0.0): decompile.sh has wrapped
+    # this invocation in `timeout $VINEFLOWER_TIMEOUT_SECONDS` since before
+    # this release, so a hung Vineflower dies on bash. decompile.ps1 had no
+    # counterpart at all - a hang here ran forever on Windows while the
+    # same documented env var silently did nothing. Same default (900),
+    # same env var name, same validation, same message text as bash's
+    # `[[ "$ff_timeout_seconds" =~ ^[0-9]+$ ]] && (( ff_timeout_seconds >
+    # 0 ))` guard.
+    $ffTimeoutSeconds = $env:VINEFLOWER_TIMEOUT_SECONDS
+    if ([string]::IsNullOrEmpty($ffTimeoutSeconds)) { $ffTimeoutSeconds = '900' }
+    $ffUseTimeout = ($ffTimeoutSeconds -match '^[0-9]+$') -and ([int]$ffTimeoutSeconds -gt 0)
+
+    if ($ffUseTimeout) {
+        Write-Host "Vineflower timeout: ${ffTimeoutSeconds}s (override with VINEFLOWER_TIMEOUT_SECONDS)"
+
+        # Wait-Process -Timeout alone does not terminate the process on
+        # timeout - it just stops waiting and returns, leaving Vineflower
+        # (and, via a wrapper, its own java child) running as an orphan.
+        # Start-Process -PassThru plus WaitForExit(ms) lets us actually
+        # kill the process tree when the wait expires, mirroring what
+        # bash's `timeout` does with SIGTERM/SIGKILL.
+        #
+        # Start-Process (UseShellExecute=$false, forced by -NoNewWindow)
+        # calls CreateProcess directly, which - unlike the call operator
+        # a few lines below, or a real ShellExecute - cannot launch a
+        # .cmd/.bat file itself; only cmd.exe can interpret one. JAVA_BIN
+        # (or a future tools.psv candidate) resolving to a wrapper script
+        # is exactly this case, so route through cmd.exe /c when $vfExe
+        # is one.
+        $ffLaunchFile = $vfExe
+        $ffLaunchArgs = $fullArgs
+        if ($vfExe -match '\.(cmd|bat)$') {
+            $ffLaunchFile = 'cmd.exe'
+            $ffLaunchArgs = @('/c', $vfExe) + $fullArgs
+        }
+        # Start-Process defaults -WorkingDirectory to the launched file's own
+        # directory, not the caller's - unlike the call operator used below,
+        # which inherits $PWD. $OutDir/$jarToDecompile are frequently
+        # relative (the default $Output is), so without this override the
+        # timed invocation would resolve them against the wrong directory.
+        $ffProc = Start-Process -FilePath $ffLaunchFile -ArgumentList $ffLaunchArgs -NoNewWindow -PassThru -WorkingDirectory (Get-Location).Path
+        if (-not $ffProc.WaitForExit([int]$ffTimeoutSeconds * 1000)) {
+            # Kill the whole process tree, not just $ffProc itself, in case
+            # the resolved tool is a wrapper (e.g. a .cmd) around a real
+            # java child. taskkill /T walks the tree; /F forces termination.
+            & taskkill.exe /PID $ffProc.Id /T /F *> $null
+            $ffProc.WaitForExit()
+            # The real exit status here is "timed out", not whatever
+            # taskkill's forced termination happens to leave in
+            # $ffProc.ExitCode - mirror bash's `timeout`, which reports 124
+            # on timeout regardless of the killed process's own exit code.
+            # decompile.sh already special-cases 124 below (kept as-is).
+            $ffExit = 124
+        } else {
+            $ffExit = $ffProc.ExitCode
+        }
+    } else {
+        & $vfExe @fullArgs | Out-Host
+        # The C2 fix: see the matching comment in Invoke-Jadx above.
+        $ffExit = $LASTEXITCODE
+        if ($null -eq $ffExit) { $ffExit = 0 }
+    }
 
     # Vineflower outputs a JAR containing .java files — extract it
     $resultJar = Join-Path $OutDir ([IO.Path]::GetFileName($jarToDecompile))
@@ -286,6 +345,9 @@ function Invoke-Vineflower {
 
     Write-Host "Error: Vineflower produced no Java output." -ForegroundColor Red
     if ($ffExit -ne 0) {
+        if ($ffExit -eq 124) {
+            Write-Host "Error: Vineflower exceeded timeout (${ffTimeoutSeconds}s)." -ForegroundColor Red
+        }
         Write-Host "Error: Vineflower exited with status $ffExit." -ForegroundColor Red
     }
     return 1

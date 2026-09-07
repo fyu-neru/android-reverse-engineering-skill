@@ -604,6 +604,87 @@ CMD
     "[win] D21: decompile.ps1 -Engine vineflower resolves java through JAVA_BIN, not a hard-coded 'java' literal"
   assert_contains "$out21" "JAVA_STUB_RAN" \
     "[win] D21: decompile.ps1 -Engine vineflower actually invokes the JAVA_BIN-resolved java stub"
+
+  # --- D22 (last cross-platform divergence before 2.0.0): decompile.sh has
+  # wrapped its Vineflower invocation in `timeout $VINEFLOWER_TIMEOUT_SECONDS`
+  # since before this release; decompile.ps1 had no counterpart at all, so a
+  # hung Vineflower ran forever on Windows while the documented env var
+  # silently did nothing. This must prove actual termination, not merely
+  # that the timeout message was printed (a message can print while the
+  # process keeps running forever): the stub sleeps a fixed, short 5s via
+  # a nested `powershell -Command Start-Sleep` (not `ping`, whose ICMP
+  # round-trip is not guaranteed short or even deterministic in every
+  # environment — a stub that can itself stall defeats the point of a
+  # bounded test), VINEFLOWER_TIMEOUT_SECONDS is set to 1, and the test
+  # asserts both that decompile.ps1 returns in well under 5s AND that the
+  # stub's post-sleep marker file — proof it ran to completion — was never
+  # written. Bounding the stub matters independently of whether the kill
+  # actually fires: with the kill mutated away (see
+  # tests/mutations/decompile-ps1-vineflower-timeout-not-killed.mutation),
+  # this stub's own 5s ceiling is what keeps the *test* fast instead of
+  # hanging the whole run — the assertions below then simply fail instead.
+  work22=$(new_tmpdir)
+  bin22=$(new_tmpdir)
+  home22=$(new_tmpdir)
+  mkdir -p "$home22/.local/share/vineflower"
+  touch "$home22/.local/share/vineflower/vineflower.jar"
+  cat > "$bin22/java-stub.cmd" <<'CMD'
+@echo off
+echo JAVA_STUB_STARTED
+powershell -NoProfile -NonInteractive -Command "Start-Sleep -Seconds 5"
+echo DONE > "%STUB_MARKER%"
+CMD
+
+  touch "$work22/lib.jar"
+  native_work22="$work22"
+  native_home22="$home22"
+  native_ps1_22="$SCRIPT_DIR/decompile.ps1"
+  native_javastub22="$bin22/java-stub.cmd"
+  native_marker22="$work22/timeout-marker.txt"
+  if command -v cygpath >/dev/null 2>&1; then
+    native_work22=$(cygpath -w "$work22")
+    native_home22=$(cygpath -w "$home22")
+    native_ps1_22=$(cygpath -w "$SCRIPT_DIR/decompile.ps1")
+    native_javastub22=$(cygpath -w "$bin22/java-stub.cmd")
+    native_marker22=$(cygpath -w "$work22/timeout-marker.txt")
+  fi
+
+  start22=$(date +%s)
+  out22=$(cd "$work22" && USERPROFILE="$native_home22" JAVA_BIN="$native_javastub22" \
+          STUB_MARKER="$native_marker22" VINEFLOWER_TIMEOUT_SECONDS=1 \
+          env -u FERNFLOWER_JAR_PATH -u VINEFLOWER_JAR \
+          "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_22" \
+          -Engine vineflower "$native_work22\lib.jar" 2>&1)
+  status22=$?
+  end22=$(date +%s)
+  elapsed22=$((end22 - start22))
+
+  assert_equals "$status22" "1" \
+    "[win] D22: decompile.ps1 exits non-zero when Vineflower exceeds VINEFLOWER_TIMEOUT_SECONDS"
+  assert_contains "$out22" "Vineflower timeout: 1s (override with VINEFLOWER_TIMEOUT_SECONDS)" \
+    "[win] D22: decompile.ps1 honours VINEFLOWER_TIMEOUT_SECONDS with the same message text as decompile.sh"
+  assert_contains "$out22" "Error: Vineflower exceeded timeout (1s)." \
+    "[win] D22: decompile.ps1 reports the 124/exceeded-timeout status the same way decompile.sh does"
+
+  # The real assertion: the stub only writes its marker file AFTER its 5s
+  # sleep completes. If decompile.ps1 had only printed the message above
+  # without actually killing the process (Wait-Process -Timeout's failure
+  # mode), this run would take ~5s and the marker would exist.
+  if [ -f "$work22/timeout-marker.txt" ]; then
+    marker22="present"
+  else
+    marker22="absent"
+  fi
+  assert_equals "$marker22" "absent" \
+    "[win] D22: decompile.ps1 actually terminates the Vineflower process on timeout, not merely printing the timeout message"
+
+  if [ "$elapsed22" -lt 4 ]; then
+    fast22="yes"
+  else
+    fast22="no"
+  fi
+  assert_equals "$fast22" "yes" \
+    "[win] D22: decompile.ps1 returns in well under the stub's 5s sleep once VINEFLOWER_TIMEOUT_SECONDS(1) elapses"
 fi
 
 cleanup_tmpdirs
