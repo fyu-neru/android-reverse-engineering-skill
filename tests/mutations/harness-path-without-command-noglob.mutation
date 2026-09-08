@@ -1,0 +1,4 @@
+FILE:tests/lib/harness.sh
+FIND:  set +f
+REPLACE:  :
+EXPECT:path_without_command still mirrors a directory's other executables when the caller has pathname expansion off

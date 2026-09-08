@@ -215,7 +215,7 @@ _mirror_one() {
 # PATH entries that are not existing directories are dropped; they
 # cannot resolve anything either way.
 path_without_command() {
-  local cmd="$1" out="" oldifs="$IFS" dir mirror f base seen mirrored noglob
+  local cmd="$1" out="" oldifs="$IFS" dir mirror f base seen mirrored globbed noglob
   case "$-" in
     *f*) noglob=already ;;
     *)   noglob=no ;;
@@ -225,7 +225,17 @@ path_without_command() {
   set -f
   set -- $PATH
   IFS="$oldifs"
-  if [ "$noglob" = "no" ]; then set +f; fi
+
+  # Globbing back ON for the rest of this function, whatever the caller
+  # had — the file loop below depends on it, and a caller splitting its
+  # own comma-separated list under `set -f` is a normal thing to be
+  # called from. Left off, "$dir"/* stays literal, `[ -f ]` is false for
+  # that one string, and the mirror comes back EMPTY while every counter
+  # reads zero — so the guard below sees seen=0 and reports nothing
+  # wrong. That is exactly what happened: the mirrors were created,
+  # contained nothing, and CI failed with `env: command not found`
+  # because the returned PATH had no tools left on it at all.
+  set +f
 
   for dir in "$@"; do
     if [ -z "$dir" ] || [ ! -d "$dir" ]; then
@@ -239,7 +249,14 @@ path_without_command() {
     mirror=$(new_tmpdir)
     seen=0
     mirrored=0
+    globbed=0
     for f in "$dir"/*; do
+      # An unexpanded glob is one iteration over a path that does not
+      # exist, so -e distinguishes it from a real entry. Counting real
+      # entries is what makes the "expanded to nothing" case below
+      # detectable at all.
+      [ -e "$f" ] || continue
+      globbed=$((globbed + 1))
       [ -f "$f" ] || continue
       base=${f##*/}
       case "$base" in
@@ -250,15 +267,28 @@ path_without_command() {
         mirrored=$((mirrored + 1))
       fi
     done
+    if [ "$globbed" -eq 0 ]; then
+      # This directory provably holds $cmd — that is why we are mirroring
+      # it — so the glob matching nothing is impossible unless expansion
+      # itself was disabled. Fail rather than return an empty mirror.
+      echo "path_without_command: '$dir'/* expanded to nothing, yet that directory" >&2
+      echo "  holds '$cmd'. Pathname expansion is off (set -f) somewhere it should" >&2
+      echo "  not be; returning an empty mirror here would hand back a PATH with no" >&2
+      echo "  tools on it." >&2
+      if [ "$noglob" = "already" ]; then set -f; fi
+      return 1
+    fi
     if [ "$seen" -gt 0 ] && [ "$mirrored" -eq 0 ]; then
       echo "path_without_command: could not mirror any of the $seen files in $dir" >&2
       echo "  (symlink, hard link and copy all failed). Handing back a PATH that" >&2
       echo "  silently loses every tool in that directory is what this function" >&2
       echo "  exists to prevent, so it is failing instead." >&2
+      if [ "$noglob" = "already" ]; then set -f; fi
       return 1
     fi
     out="${out:+$out:}$mirror"
   done
+  if [ "$noglob" = "already" ]; then set -f; fi
   printf '%s\n' "$out"
 }
 

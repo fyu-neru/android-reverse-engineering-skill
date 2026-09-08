@@ -397,6 +397,24 @@ sc_pwc_py3=$(PATH="$sc_pwc_path" command -v python3 2>/dev/null || echo NONE)
 assert_equals "$sc_pwc_py3" "NONE" \
   "[all] harness.sh: path_without_command leaves the named command unresolvable anywhere on the returned PATH"
 
+# Called from inside a caller's own `set -f` region — which is normal
+# here, since every comma-separated split in this suite runs under it.
+# The function's file loop needs pathname expansion; with it left off,
+# "$dir"/* stays literal, nothing is mirrored, every counter reads zero,
+# and it returns a PATH of EMPTY directories while reporting success.
+# CI found it as `env: command not found`, three tests away from the
+# cause.
+sc_pwc_oldopts2="$-"
+sc_pwc_oldpath2="$PATH"
+PATH="$sc_pwc_src:$PATH"
+set -f
+sc_pwc_path_noglob=$(path_without_command python3)
+case "$sc_pwc_oldopts2" in *f*) ;; *) set +f ;; esac
+PATH="$sc_pwc_oldpath2"
+sc_pwc_marker_noglob=$(PATH="$sc_pwc_path_noglob" aretest_marker 2>/dev/null || echo MARKER_LOST)
+assert_equals "$sc_pwc_marker_noglob" "MARKER_RAN" \
+  "[all] harness.sh: path_without_command still mirrors a directory's other executables when the caller has pathname expansion off (set -f)"
+
 # The overwhelmingly common call shape is `d=$(new_tmpdir)` — a command
 # substitution, so the TEST_TMPDIRS append happens in a subshell and dies
 # with it. Before new_tmpdir also recorded the path in a registry file,
