@@ -225,6 +225,12 @@ for m in "$TESTS_DIR"/mutations/*.mutation; do
     skipped=$((skipped + 1)); skipped_names="$skipped_names $name"
     continue
   fi
+
+  if [ "$requires" = "not-windows" ] && host_is_really_windows; then
+    echo "  skip     - $name: REQUIRES not-windows, this host IS Windows — the defect it reintroduces is only observable where the target command shares a directory with the core utilities (python3 in /usr/bin next to grep and sed), which is not this host's layout, so it can be neither killed nor meaningfully survived here"
+    skipped=$((skipped + 1)); skipped_names="$skipped_names $name"
+    continue
+  fi
   total=$((total + 1))
 
   if [ -z "$expect" ]; then

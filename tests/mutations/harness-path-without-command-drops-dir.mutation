@@ -1,0 +1,5 @@
+FILE:tests/lib/harness.sh
+FIND:        _pwc_out="${_pwc_out:+$_pwc_out:}$_pwc_mirror"
+REPLACE:        :
+EXPECT:Task2 case 1 precondition: check-deps.sh emitted a python3 status line at all
+REQUIRES:not-windows
