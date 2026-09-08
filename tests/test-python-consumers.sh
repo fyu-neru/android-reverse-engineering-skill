@@ -114,6 +114,15 @@ pc_recover_out=$(PATH="$pc_bin:$path_no_python" env -u PYTHON3_BIN \
   "${BASH:-bash}" "$RECOVER" "$pc_src" "$pc_out_dir/mapping" 2>&1)
 pc_recover_line=$(printf '%s\n' "$pc_recover_out" | grep '^RESOLVED_PYTHON_RAN:' || true)
 if [ -n "$pc_recover_line" ]; then pc_recover_seen=present; else pc_recover_seen=absent; fi
+if [ "$pc_recover_seen" = "absent" ]; then
+  # Diagnostic, not an assertion: without it a failure here says only
+  # "expected present, got absent", which is the least useful thing it
+  # could say about a script that did not run.
+  echo "  (diagnostic) recover-kotlin-names.sh produced:" >&2
+  printf '%s\n' "$pc_recover_out" | sed 's/^/    | /' >&2
+  echo "  (diagnostic) PATH head: $(printf '%s' "$pc_bin:$path_no_python" | cut -c1-200)" >&2
+  echo "  (diagnostic) python resolves to: $(PATH="$pc_bin:$path_no_python" command -v python 2>/dev/null || echo none)" >&2
+fi
 assert_equals "$pc_recover_seen" "present" \
   "[all] recover-kotlin-names.sh runs the interpreter tool_resolve found, not a bare python3 (on Windows the name python3 only ever resolves to the Store stub)"
 
