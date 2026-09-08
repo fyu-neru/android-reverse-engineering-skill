@@ -456,7 +456,22 @@ assert_equals "$ps1_verifiers" "$sh_verifiers" \
   "[all] static: tools.sh and Tools.ps1 dispatch the exact same set of verify names"
 
 psv_verify_missing=""
-psv_verify_values=$(awk -F'|' 'NR>1 && $1 !~ /^#/ && NF>6 {print $6}' "$TOOLS_PSV" | sort -u)
+# Column index derived from the header rather than hardcoded as $6: a
+# column inserted before `verify` would otherwise silently move this
+# scan onto a different column, and it would keep passing while checking
+# the wrong thing.
+psv_verify_col=$(awk -F'|' 'NR==1 {for (i=1;i<=NF;i++) if ($i=="verify") {print i; exit}}' "$TOOLS_PSV")
+if [ -n "$psv_verify_col" ]; then psv_verify_col_found=yes; else psv_verify_col_found=no; fi
+assert_equals "$psv_verify_col_found" "yes" \
+  "[all] precondition: tools.psv's header actually has a verify column (without it the scan below iterates nothing and passes having checked nothing)"
+psv_verify_values=$(awk -F'|' -v c="${psv_verify_col:-0}" \
+  'NR>1 && $1 !~ /^#/ && NF>=c && c>0 {print $c}' "$TOOLS_PSV" | sort -u)
+assert_contains "$psv_verify_values" "python3" \
+  "[all] precondition: the verify column's values were actually read from tools.psv"
+# set -f for the same reason every other unquoted split in this plugin
+# does it: word splitting brings pathname expansion with it.
+_pv_oldopts="$-"
+set -f
 for _pv in $psv_verify_values; do
   case "$_pv" in
     -|verify|'') continue ;;
@@ -470,6 +485,7 @@ $_pv
     *) psv_verify_missing="$psv_verify_missing $_pv" ;;
   esac
 done
+case "$_pv_oldopts" in *f*) ;; *) set +f ;; esac
 assert_equals "$psv_verify_missing" "" \
   "[all] static: every verify value used by a tools.psv row is one the readers implement"
 
@@ -626,9 +642,9 @@ elif command -v powershell >/dev/null 2>&1; then
 fi
 
 if ! is_windows_host; then
-  skip_group 34 "not running on a Windows host; skipping the [win] runtime cross-reader consistency group (Resolve-Tool/Get-ToolArgv/Expand-ToolPlaceholders on Tools.ps1 — 34 assertions require Windows executable-resolution semantics)."
+  skip_group 36 "not running on a Windows host; skipping the [win] runtime cross-reader consistency group (Resolve-Tool/Get-ToolArgv/Expand-ToolPlaceholders on Tools.ps1 — 36 assertions require Windows executable-resolution semantics)."
 elif [ -z "$PWSH_BIN" ]; then
-  skip_group 34 "on a Windows host but neither pwsh nor powershell found on PATH; skipping the same 34 [win] cross-reader assertions."
+  skip_group 36 "on a Windows host but neither pwsh nor powershell found on PATH; skipping the same 36 [win] cross-reader assertions."
 else
   cross_root=$(new_tmpdir)
   cross_lib="$cross_root/skills/android-reverse-engineering/scripts/lib"
@@ -942,8 +958,8 @@ CMD
 $ErrorActionPreference = 'Stop'
 $env:PATH = $env:STUB_BIN_DIR_1 + ';' + $env:STUB_BIN_DIR_2
 . $env:TOOLS_PS1_PATH
-$matches = @(Get-Command 'vdup-zzz' -CommandType Application -ErrorAction SilentlyContinue)
-Write-Output ('MATCHES=' + $matches.Count)
+$vdupMatches = @(Get-Command 'vdup-zzz' -CommandType Application -ErrorAction SilentlyContinue)
+Write-Output ('MATCHES=' + $vdupMatches.Count)
 $r = Resolve-Tool -Id 'vdup'
 if ($null -eq $r) { Write-Output 'RESOLVE=<NULL>' } else { Write-Output ('RESOLVE=' + $r.Path) }
 EOF
@@ -951,6 +967,55 @@ EOF
   vdup_out=$(CLAUDE_PLUGIN_ROOT="$native_vdup_root" TOOLS_PS1_PATH="$native_tools_ps1" \
     STUB_BIN_DIR_1="$native_vdup_first" STUB_BIN_DIR_2="$native_vdup_second" \
     "$PWSH_BIN" -NoProfile -NonInteractive -File "$vdup_script" 2>&1 | tr -d '\r')
+
+  # ---------------------------------------------------------------
+  # An empty element in the probe list must be skipped, not fed to
+  # Get-Command. `Get-Command ''` fails PARAMETER VALIDATION, which
+  # -ErrorAction SilentlyContinue does not suppress, so under this
+  # project's $ErrorActionPreference = 'Stop' it terminated the calling
+  # script — while tools.sh resolved the same manifest without
+  # complaint. The candidates loop had guarded this since 2.0.0; the
+  # probe loop never did.
+  #
+  # Asserting on a marker printed AFTER the call, not just on the
+  # resolved path: the failure mode was the script dying, so "did it
+  # get here" is the thing to check.
+  # ---------------------------------------------------------------
+  vempty_root=$(new_tmpdir)
+  vempty_lib="$vempty_root/skills/android-reverse-engineering/scripts/lib"
+  mkdir -p "$vempty_lib"
+  cat > "$vempty_lib/tools.psv" <<'PSV'
+id|required|platform|kind|probe|verify|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
+vempty|optional|all|path|vempty-nosuch-zzz,,vempty-real-zzz|-|-|-|-|-|-|-|stray comma in the probe list
+PSV
+
+  vempty_bin=$(new_tmpdir)
+  cat > "$vempty_bin/vempty-real-zzz.cmd" <<'CMD'
+@echo off
+exit /b 0
+CMD
+  native_vempty_root=$(to_native_path "$vempty_root")
+  native_vempty_bin=$(to_native_path "$vempty_bin")
+
+  vempty_script_dir=$(new_tmpdir)
+  vempty_script="$vempty_script_dir/vempty-check.ps1"
+  cat > "$vempty_script" <<'EOF'
+$ErrorActionPreference = 'Stop'
+$env:PATH = $env:STUB_BIN_DIR
+. $env:TOOLS_PS1_PATH
+$r = Resolve-Tool -Id 'vempty'
+if ($null -eq $r) { Write-Output 'RESOLVE=<NULL>' } else { Write-Output ('RESOLVE=' + $r.Path) }
+Write-Output 'REACHED_END'
+EOF
+
+  vempty_out=$(CLAUDE_PLUGIN_ROOT="$native_vempty_root" TOOLS_PS1_PATH="$native_tools_ps1" \
+    STUB_BIN_DIR="$native_vempty_bin" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$vempty_script" 2>&1 | tr -d '\r')
+
+  assert_contains "$vempty_out" "REACHED_END" \
+    "[win] Resolve-Tool: a stray empty element in the probe list is skipped, not passed to Get-Command (which fails parameter validation and terminates under ErrorActionPreference Stop)"
+  assert_contains "$vempty_out" "vempty-real-zzz.cmd" \
+    "[win] Resolve-Tool: resolution continues past that empty element to the name after it"
 
   vdup_matches_line=$(printf '%s\n' "$vdup_out" | grep '^MATCHES=' || true)
   vdup_resolve_line=$(printf '%s\n' "$vdup_out" | grep '^RESOLVE=' || true)

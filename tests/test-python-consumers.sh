@@ -33,19 +33,54 @@ assert_contains "$pc_probe_names" "python3" \
 
 pc_oldpath="$PATH"
 pc_oldifs="$IFS"
+pc_oldopts="$-"
+pc_scrub_failed=""
 IFS=','
+set -f
 for pc_name in $pc_probe_names; do
   IFS="$pc_oldifs"
   if [ -n "$pc_name" ] && [ "$pc_name" != "-" ]; then
+    # Record a failure rather than swallowing it: path_without_command
+    # goes out of its way to fail instead of returning a PATH that
+    # quietly lost a directory's tools, and discarding that status here
+    # would put the lie straight back.
     if pc_scrubbed=$(path_without_command "$pc_name"); then
       PATH="$pc_scrubbed"
+    else
+      pc_scrub_failed="$pc_scrub_failed $pc_name"
     fi
   fi
   IFS=','
 done
 IFS="$pc_oldifs"
+case "$pc_oldopts" in *f*) ;; *) set +f ;; esac
 path_no_python="$PATH"
 PATH="$pc_oldpath"
+
+assert_equals "$pc_scrub_failed" "" \
+  "[all] precondition: path_without_command succeeded for every probed name"
+
+# A fixture PATH that still resolves one of those names would mean the
+# runs below were satisfied by this machine's own Python rather than by
+# the stub they are supposed to be about.
+pc_leak=""
+pc_oldifs="$IFS"
+pc_oldopts="$-"
+IFS=','
+set -f
+for pc_name in $pc_probe_names; do
+  IFS="$pc_oldifs"
+  if [ -n "$pc_name" ] && [ "$pc_name" != "-" ]; then
+    if PATH="$path_no_python" command -v "$pc_name" >/dev/null 2>&1; then
+      pc_leak="$pc_leak $pc_name"
+    fi
+  fi
+  IFS=','
+done
+IFS="$pc_oldifs"
+case "$pc_oldopts" in *f*) ;; *) set +f ;; esac
+assert_equals "$pc_leak" "" \
+  "[all] precondition: the scrubbed PATH resolves none of the names the python3 row probes for"
 
 # A stub that answers the version probe like a real Python 3 and echoes
 # its argv for anything else, so a run can be attributed to it. Named

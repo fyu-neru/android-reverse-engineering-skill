@@ -115,21 +115,29 @@ foreach ($depId in (Get-ToolList -Want 'optional')) {
                 $ffMatchedProbe = $null
                 if (-not $ffEnvVal -or $ffPath -ne $ffEnvVal) {
                     $ffProbe = Get-ToolField -Id 'vineflower' -Column 'probe'
-                    foreach ($p in ($ffProbe -split ',')) {
-                        # @() and an inner loop for the same reason as
-                        # Resolve-Tool: Get-Command returns every PATH
-                        # match. Unwrapped, `$cmd.Source -eq $ffPath` on
-                        # a multi-match name is an array comparison that
-                        # happens to work by filtering, which is a
-                        # different thing from what it looks like it
-                        # says.
-                        foreach ($cmd in @(Get-Command $p -CommandType Application -ErrorAction SilentlyContinue)) {
-                            if ($cmd.Source -eq $ffPath) {
-                                $ffMatchedProbe = $p
-                                break
+                    if ($ffProbe -and $ffProbe -cne '-') {
+                        foreach ($p in ($ffProbe -split ',')) {
+                            # An empty element must be skipped, not fed
+                            # onward: Get-Command '' is a PARAMETER
+                            # VALIDATION failure, which -ErrorAction
+                            # SilentlyContinue does not suppress, so it
+                            # terminates under this file's 'Stop'.
+                            if (-not $p) { continue }
+
+                            # @() and an inner loop for the same reason
+                            # as Resolve-Tool: Get-Command returns every
+                            # PATH match. Unwrapped, `$cmd.Source -eq
+                            # $ffPath` on a multi-match name is an array
+                            # filter rather than the scalar comparison
+                            # it reads as.
+                            foreach ($cmd in @(Get-Command $p -CommandType Application -ErrorAction SilentlyContinue)) {
+                                if ($cmd.Source -eq $ffPath) {
+                                    $ffMatchedProbe = $p
+                                    break
+                                }
                             }
+                            if ($ffMatchedProbe) { break }
                         }
-                        if ($ffMatchedProbe) { break }
                     }
                 }
                 if ($ffMatchedProbe) {
@@ -167,9 +175,14 @@ foreach ($depId in (Get-ToolList -Want 'optional')) {
             $py3Ok = $false
             $py3ExitCode = $null
             if ($py3Resolved) {
+                # Clear it first: `&` on anything that is not a native
+                # executable leaves $LASTEXITCODE untouched, and
+                # PYTHON3_BIN is honoured unverified, so an arbitrary
+                # path can land here and a stale 0 would read as success.
+                $global:LASTEXITCODE = $null
                 try {
                     $py3CheckOutput = & $py3Resolved.Path -c "import sys; print(sys.version_info[0])" 2>$null
-                    $py3ExitCode = $LASTEXITCODE
+                    if ($null -eq $LASTEXITCODE) { $py3ExitCode = 1 } else { $py3ExitCode = $LASTEXITCODE }
                 } catch {
                     $py3CheckOutput = $null
                     $py3ExitCode = 1
@@ -201,6 +214,13 @@ foreach ($depId in (Get-ToolList -Want 'optional')) {
                 $py3Probe = Get-ToolField -Id 'python3' -Column 'probe'
                 if ($py3Probe -and $py3Probe -cne '-') {
                     foreach ($py3Name in ($py3Probe -split ',')) {
+                        # An empty element terminates under 'Stop':
+                        # Get-Command '' fails parameter validation,
+                        # which -ErrorAction SilentlyContinue does not
+                        # suppress. The bash counterpart guards the same
+                        # element in check-deps.sh's loop.
+                        if (-not $py3Name) { continue }
+
                         # Same Object[] trap as Resolve-Tool: Get-Command
                         # returns every PATH match, and this branch exists
                         # to name exactly one path. Left unwrapped, the
@@ -215,9 +235,10 @@ foreach ($depId in (Get-ToolList -Want 'optional')) {
                     }
                 }
                 if ($py3Found) {
+                    $global:LASTEXITCODE = $null
                     try {
                         & $py3Found -c "import sys" 2>$null | Out-Null
-                        $py3FoundExit = $LASTEXITCODE
+                        if ($null -eq $LASTEXITCODE) { $py3FoundExit = 1 } else { $py3FoundExit = $LASTEXITCODE }
                     } catch {
                         $py3FoundExit = 1
                     }

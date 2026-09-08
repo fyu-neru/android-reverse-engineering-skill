@@ -313,33 +313,53 @@ elif command -v powershell >/dev/null 2>&1; then
   PWSH_BIN="powershell"
 fi
 
-# What this can and cannot control: check-deps.ps1 deliberately refreshes
-# $env:PATH from the User environment variable on startup, so that tools
-# installed during the same session are picked up. A caller therefore
-# cannot narrow the PATH it searches, and asserting [MISSING] here would
-# be asserting something about this machine's own Python rather than
-# about the script. What IS controllable, and what actually broke, is
-# whether the script reaches its own output at all.
+# Driven through a fixture tools.psv, not the real one.
+#
+# check-deps.ps1 refreshes $env:PATH from the User environment variable
+# on startup so tools installed in the same session are picked up, which
+# means a caller cannot narrow the PATH it searches. But it reads its
+# tool list through Get-ToolsPsvPath, which honours CLAUDE_PLUGIN_ROOT
+# (Tools.ps1:17-22) — so a fixture psv holding one python3 row makes the
+# outcome deterministic AND stops the run touching this machine's real
+# tools at all.
+#
+# That second part is not tidiness. Against the real psv this block
+# resolved jadx to an extension-less file and ran `& <path> --version`,
+# which makes Windows raise its "how do you want to open this file"
+# picker: measured, one OpenWith process left behind per invocation, and
+# run-mutations.sh runs the suite ~69 times.
 if ! is_windows_host; then
-  skip_group 2 "not running on a Windows host; skipping the [win] check-deps.ps1 completion checks (2 assertions need a real PowerShell host)."
+  skip_group 3 "not running on a Windows host; skipping the [win] check-deps.ps1 checks (3 assertions need a real PowerShell host)."
 elif [ -z "$PWSH_BIN" ]; then
-  skip_group 2 "on a Windows host but neither pwsh nor powershell found on PATH; skipping the same 2 [win] check-deps.ps1 assertions."
+  skip_group 3 "on a Windows host but neither pwsh nor powershell found on PATH; skipping the same 3 [win] check-deps.ps1 assertions."
 else
+  cdps_root=$(new_tmpdir)
+  cdps_lib="$cdps_root/skills/android-reverse-engineering/scripts/lib"
+  mkdir -p "$cdps_lib"
+  cat > "$cdps_lib/tools.psv" <<'PSV'
+id|required|platform|kind|probe|verify|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
+python3|optional|all|path|cdps-nosuch-zzz3,cdps-nosuch-zzz|python3|PYTHON3_BIN|-|-|-|-|-|fixture row
+PSV
+
   native_check_deps_ps1=$(to_native_path "$SCRIPTS_DIR_PS/check-deps.ps1")
+  native_cdps_root=$(to_native_path "$cdps_root")
   cdps_script_dir=$(new_tmpdir)
   cdps_script="$cdps_script_dir/cdps-run.ps1"
   cat > "$cdps_script" <<'EOF'
 $ErrorActionPreference = 'Continue'
+Remove-Item Env:\PYTHON3_BIN -ErrorAction SilentlyContinue
 & $env:CHECK_DEPS_PS1 2>&1 | ForEach-Object { Write-Output $_ }
 EOF
 
-  cdps_out=$(CHECK_DEPS_PS1="$native_check_deps_ps1" \
+  cdps_out=$(CHECK_DEPS_PS1="$native_check_deps_ps1" CLAUDE_PLUGIN_ROOT="$native_cdps_root" \
     "$PWSH_BIN" -NoProfile -NonInteractive -File "$cdps_script" 2>&1 | tr -d '\r')
 
   cdps_py3_line=$(printf '%s\n' "$cdps_out" | grep -E '^\[(OK|MISSING)\].*python3' || true)
   if [ -n "$cdps_py3_line" ]; then cdps_seen=present; else cdps_seen=absent; fi
   assert_equals "$cdps_seen" "present" \
-    "[win] check-deps.ps1 emits a python3 status line at all (an unwrapped Get-Command made \$cmd.Source an Object[] on any machine where a probed name has two PATH matches, and binding that to a [string] parameter aborted the script here)"
+    "[win] check-deps.ps1 emits a python3 status line at all (an unwrapped Get-Command made \$cmd.Source an Object[] wherever a probed name has two PATH matches, and binding that to a [string] parameter aborted the script before this line)"
+  assert_not_contains "$cdps_py3_line" "[OK]" \
+    "[win] check-deps.ps1: with no probe name resolving to anything, python3 is not reported [OK]"
   cdps_summary=$(printf '%s\n' "$cdps_out" | grep -E "dependenc(y|ies)" || true)
   if [ -n "$cdps_summary" ]; then cdps_finished=yes; else cdps_finished=no; fi
   assert_equals "$cdps_finished" "yes" \

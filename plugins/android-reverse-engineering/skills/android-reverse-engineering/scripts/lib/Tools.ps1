@@ -216,6 +216,16 @@ function Resolve-Tool {
     if ($null -eq $probe) { return $null }
     if ($probe -cne '-') {
         foreach ($p in ($probe -split ',')) {
+            # An empty element (a stray ",," in the probe list) must be
+            # skipped, not fed onward. Get-Command '' is a PARAMETER
+            # VALIDATION failure, which -ErrorAction SilentlyContinue
+            # does not suppress: under this project's
+            # $ErrorActionPreference = 'Stop' it terminates the calling
+            # script, while tools.sh's loop resolves the same manifest
+            # without complaint. The candidates loop below has always
+            # guarded this; the probe loop never did.
+            if (-not $p) { continue }
+
             # Get-Command returns EVERY match on PATH, not just the first.
             # On a machine with a real Python install alongside the Store
             # alias, `Get-Command python -CommandType Application` returns

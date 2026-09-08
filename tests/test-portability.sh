@@ -162,12 +162,80 @@ scan "no readlink -f in tests/lib (GNU only)" '\breadlink[[:space:]]+-f\b' "$REP
 # Both are invisible to a fixture that puts one file per name in one
 # directory, which is what every PowerShell fixture here did. A static
 # scan does not depend on the fixture's shape.
-gc_unwrapped=$(grep -nE 'Get-Command [^|]*-CommandType Application' \
-  "$SCRIPT_DIR"/*.ps1 "$SCRIPT_DIR"/lib/*.ps1 2>/dev/null \
-  | grep -v '@(Get-Command' \
-  | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' || true)
+# unwrapped_get_command <file>...
+# Reports each Get-Command/gcm call that asks for -CommandType
+# Application without being wrapped in @().
+#
+# Wrapped calls are RENAMED before the search rather than filtered out
+# of the results afterwards. A line-level `grep -v '@(Get-Command'`
+# suppresses the whole line, so one wrapped call would hide an unwrapped
+# one sitting beside it — and a line holding both is exactly the shape
+# that would slip a regression through. `gcm` and a quoted or
+# double-spaced 'Application' are covered for the same reason: the value
+# of this check is only as good as the forms it cannot be written
+# around.
+#
+# The rule is deliberately "wrapped in @()", not "made scalar somehow":
+# piping to Select-Object -First 1 is equally safe, but one shape is
+# what a reader can check at a glance.
+unwrapped_get_command() {
+  local f hits out=""
+  for f in "$@"; do
+    [ -f "$f" ] || continue
+    hits=$(sed 's/@([[:space:]]*Get-Command/@(WRAPPEDCALL/g; s/@([[:space:]]*gcm/@(WRAPPEDCALL/g' "$f" \
+      | grep -nE '(Get-Command|gcm)[[:space:]][^|]*-CommandType[[:space:]]+.?Application' \
+      | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+    if [ -n "$hits" ]; then
+      out="$out $(basename "$f"):$(printf '%s' "$hits" | tr '\n' ',')"
+    fi
+  done
+  printf '%s\n' "$out"
+}
+
+# The scan must be shown to have READ something. Without this, a wrong
+# path makes the assertion below pass having examined no code at all —
+# the same vacuity this file's other guards are built to avoid.
+gc_wrapped_seen=$(grep -c '@(Get-Command' "$SCRIPT_DIR/lib/Tools.ps1" || true)
+if [ "$gc_wrapped_seen" -ge 1 ]; then gc_scanned=yes; else gc_scanned=no; fi
+assert_equals "$gc_scanned" "yes" \
+  "[all] precondition: the PowerShell scripts were actually found and read (a wrong path would make the Get-Command scan below pass having read nothing)"
+
+gc_unwrapped=$(unwrapped_get_command "$SCRIPT_DIR"/*.ps1 "$SCRIPT_DIR"/lib/*.ps1)
 assert_equals "$gc_unwrapped" "" \
   "[all] static: every Get-Command -CommandType Application in the PowerShell scripts is wrapped in @() (it returns every PATH match, not one)"
+
+# --- self-tests: the scanner has to catch the forms a regression would
+# actually take, and stay quiet on a wrapped one. ---
+sc_gc_dir=$(new_tmpdir)
+cat > "$sc_gc_dir/wrapped.ps1" <<'PS1'
+foreach ($c in @(Get-Command $p -CommandType Application -ErrorAction SilentlyContinue)) { }
+PS1
+sc_gc_wrapped=$(unwrapped_get_command "$sc_gc_dir/wrapped.ps1")
+assert_equals "$sc_gc_wrapped" "" \
+  "unwrapped_get_command() self-test: a properly wrapped call is not reported"
+
+cat > "$sc_gc_dir/bare.ps1" <<'PS1'
+$cmd = Get-Command $p -CommandType Application -ErrorAction SilentlyContinue
+PS1
+sc_gc_bare=$(unwrapped_get_command "$sc_gc_dir/bare.ps1")
+assert_contains "$sc_gc_bare" "bare.ps1" \
+  "unwrapped_get_command() self-test: a bare call is reported"
+
+cat > "$sc_gc_dir/sameline.ps1" <<'PS1'
+$f = @(Get-Command x -CommandType Application); $g = Get-Command y -CommandType Application
+PS1
+sc_gc_sameline=$(unwrapped_get_command "$sc_gc_dir/sameline.ps1")
+assert_contains "$sc_gc_sameline" "sameline.ps1" \
+  "unwrapped_get_command() self-test: an unwrapped call sharing a line with a wrapped one is still reported (a line-level filter would hide it)"
+
+cat > "$sc_gc_dir/variants.ps1" <<'PS1'
+$a = gcm $p -CommandType Application
+$b = Get-Command $p -CommandType 'Application'
+$c = Get-Command $p -CommandType  Application
+PS1
+sc_gc_variants=$(unwrapped_get_command "$sc_gc_dir/variants.ps1")
+assert_contains "$sc_gc_variants" "variants.ps1" \
+  "unwrapped_get_command() self-test: the gcm alias, a quoted 'Application' and a double space are all still caught"
 
 # --- mutation-manifest guard: every .mutation's FIND: line must still
 # match exactly one line of the file it names.
@@ -204,6 +272,10 @@ stale_mutations() {
     # assertion".
     if [ -n "${ARE_MUTATION_IN_FLIGHT:-}" ] &&
        [ "$m_name" = "${ARE_MUTATION_IN_FLIGHT}.mutation" ]; then
+      # Say so. The variable is an environment variable, so a stray
+      # export in someone's shell would otherwise drop one mutation from
+      # this guard with no trace at all.
+      echo "  (manifest guard: not checking $m_name — run-mutations.sh reports it as currently injected)" >&2
       continue
     fi
     m_file=$(grep '^FILE:' "$m" | sed 's/^FILE://' | tail -1)
@@ -263,6 +335,17 @@ printf 'FILE:src/target.sh\nFIND:alph\nREPLACE::\nEXPECT:whatever\n' \
 sc_mut_sub=$(stale_mutations "$sc_mut_root/muts" "$sc_mut_root")
 assert_contains "$sc_mut_sub" "substring.mutation(pair1-matches-0-lines)" \
   "stale_mutations() self-test: a FIND: that is only a substring of a line is reported, matching run-mutations.sh's whole-line semantics"
+
+# ARE_MUTATION_IN_FLIGHT must exempt exactly one mutation and no others.
+# Rewriting the condition to skip unconditionally whenever the variable
+# is set would disable this guard for every mutation the runner injects,
+# and nothing else would notice.
+sc_mut_inflight=$(ARE_MUTATION_IN_FLIGHT=drifted \
+  stale_mutations "$sc_mut_root/muts" "$sc_mut_root" 2>/dev/null)
+assert_not_contains "$sc_mut_inflight" "drifted.mutation" \
+  "stale_mutations() self-test: the mutation named by ARE_MUTATION_IN_FLIGHT is exempted (its FIND: is gone from the target on purpose while it is injected)"
+assert_contains "$sc_mut_inflight" "substring.mutation" \
+  "stale_mutations() self-test: every OTHER mutation is still checked while one is in flight (a blanket skip would disable the guard for the whole run)"
 
 # --- empty-array guard: ${arr[@]+"${arr[@]}"} sites ---
 # bash 3.2 errors on "${arr[@]}" under set -u when arr has zero elements
