@@ -107,13 +107,59 @@ assert_contains "$out6" "[OK] adb detected (optional)" \
 # by hand against the real environment. A detection that stopped at "is
 # python3 on PATH" would report this machine's own stub as [OK].
 #
-# All three cases need python3 to be unresolvable except through the stub
-# each case provides. They get that from path_without_command, which
-# mirrors any PATH directory holding a python3 into a temp directory with
-# python3 omitted, rather than dropping that directory outright — on Linux
-# python3 shares /usr/bin with grep, sed and dirname, and dropping it stops
-# check-deps.sh from producing any output at all. See harness.sh.
-path_no_py3=$(path_without_command python3)
+# Every case below needs the interpreter to be unresolvable except
+# through the stub that case provides. That means scrubbing EVERY name
+# the python3 row probes for, not just the literal "python3":
+# widening the probe list to python3,python,py made a PATH that merely
+# lacks python3 stop being an isolated fixture. These cases went green
+# to red the moment a real Python was installed on the development
+# machine, because resolution simply walked on to the real `python`.
+#
+# The names come from the row itself rather than a hardcoded list, so
+# the fixture cannot drift away from what the row actually probes — it
+# already did that once.
+#
+# path_without_command mirrors a PATH directory holding the name into a
+# temp directory with that name omitted, rather than dropping the
+# directory outright: on Linux python3 shares /usr/bin with grep, sed and
+# dirname, and dropping it stops check-deps.sh producing output at all.
+# See harness.sh.
+PLUGIN_ROOT_CD="$REPO_ROOT/plugins/android-reverse-engineering"
+TOOLS_SH_CD="$PLUGIN_ROOT_CD/skills/android-reverse-engineering/scripts/lib/tools.sh"
+py3_probe_names=$(CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT_CD" TOOLS_SH_PATH="$TOOLS_SH_CD" \
+  "${BASH:-bash}" -c '. "$TOOLS_SH_PATH"; tool_field python3 probe')
+
+sc_probe_oldpath="$PATH"
+sc_probe_oldifs="$IFS"
+IFS=','
+for sc_probe_name in $py3_probe_names; do
+  IFS="$sc_probe_oldifs"
+  if [ -n "$sc_probe_name" ] && [ "$sc_probe_name" != "-" ]; then
+    PATH=$(path_without_command "$sc_probe_name")
+  fi
+  IFS=','
+done
+IFS="$sc_probe_oldifs"
+path_no_py3="$PATH"
+PATH="$sc_probe_oldpath"
+
+# A fixture that still resolves one of those names would make every
+# [MISSING] assertion below meaningless, so prove it does not.
+sc_probe_leak=""
+sc_probe_oldifs="$IFS"
+IFS=','
+for sc_probe_name in $py3_probe_names; do
+  IFS="$sc_probe_oldifs"
+  if [ -n "$sc_probe_name" ] && [ "$sc_probe_name" != "-" ]; then
+    if PATH="$path_no_py3" command -v "$sc_probe_name" >/dev/null 2>&1; then
+      sc_probe_leak="$sc_probe_leak $sc_probe_name"
+    fi
+  fi
+  IFS=','
+done
+IFS="$sc_probe_oldifs"
+assert_equals "$sc_probe_leak" "" \
+  "[all] Task2 precondition: the scrubbed PATH resolves none of the names tools.psv's python3 row probes for (otherwise every [MISSING] case below is testing this machine's own Python)"
 
 # Case 1: no python3 anywhere (no PATH match, no PYTHON3_BIN, no
 # candidates — tools.psv's python3 row has none) -> [MISSING].
@@ -160,6 +206,46 @@ if [ -n "$py3_line_case3" ]; then py3_seen_case3=present; else py3_seen_case3=ab
 assert_equals "$py3_seen_case3" "present"   "[all] Task2 case 3 precondition: check-deps.sh emitted a python3 status line at all (every assertion below is vacuous against an empty one)"
 assert_contains "$py3_line_case3" "[OK] python3 3.11.4" \
   "[all] Task2 case 3: a genuinely working python3 interpreter is reported [OK] with its version"
+
+# Case 4 — the configuration this row was actually written for, and the
+# one it got wrong. On Windows `python3` resolves to the Microsoft Store
+# app-execution-alias stub, and the working interpreter is named
+# `python`: python.org's Windows installer creates python.exe and
+# pythonw.exe and never a python3.exe, so the name python3 can only ever
+# find the stub there. Verified on the machine this was written on after
+# installing Python 3.12.10 — `python3` exits 49, `python` prints 3.
+#
+# Resolving the first name that exists and stopping means reporting
+# [MISSING] to someone with a perfectly good Python 3.12 installed.
+bin_py3_stub_only=$(new_tmpdir)
+make_stub_bin "$bin_py3_stub_only" python3 'exit 49'
+bin_py_real=$(new_tmpdir)
+make_stub_bin "$bin_py_real" python 'code="$2"
+case "$code" in
+  *version_info*) echo "3" ;;
+  *python_version*) echo "3.12.10" ;;
+  *) echo "3" ;;
+esac
+exit 0'
+
+out_py3_case4=$(PATH="$bin_py3_stub_only:$bin_py_real:$path_no_py3" env -u PYTHON3_BIN "${BASH:-bash}" "$SCRIPT" 2>&1)
+py3_line_case4=$(printf '%s\n' "$out_py3_case4" | grep -E '^\[(OK|MISSING)\].*python3' || true)
+if [ -n "$py3_line_case4" ]; then py3_seen_case4=present; else py3_seen_case4=absent; fi
+assert_equals "$py3_seen_case4" "present" \
+  "[all] Task2 case 4 precondition: check-deps.sh emitted a python3 status line at all (every assertion below is vacuous against an empty one)"
+assert_contains "$py3_line_case4" "[OK] python3 3.12.10" \
+  "[all] Task2 case 4: a stub named python3 alongside a working interpreter named python is reported [OK] via the working one"
+
+# Case 5 — a stub and nothing else. The diagnostic must still name the
+# path it found, because "not found" is a misleading thing to tell
+# someone who can see python3 on their own PATH.
+out_py3_case5=$(PATH="$bin_py3_stub_only:$path_no_py3" env -u PYTHON3_BIN "${BASH:-bash}" "$SCRIPT" 2>&1)
+py3_line_case5=$(printf '%s\n' "$out_py3_case5" | grep -E '^\[(OK|MISSING)\].*python3' || true)
+if [ -n "$py3_line_case5" ]; then py3_seen_case5=present; else py3_seen_case5=absent; fi
+assert_equals "$py3_seen_case5" "present" \
+  "[all] Task2 case 5 precondition: check-deps.sh emitted a python3 status line at all"
+assert_contains "$py3_line_case5" "$bin_py3_stub_only/python3" \
+  "[all] Task2 case 5: with only a stub present, the [MISSING] line names the path it found rather than claiming python3 is not there"
 
 cleanup_tmpdirs
 print_summary

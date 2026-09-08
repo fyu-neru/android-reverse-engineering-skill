@@ -131,6 +131,53 @@ function Get-ToolField {
 # Returns [pscustomobject]@{ Kind = 'cli'|'jar'; Path = <string> } for the
 # resolved artifact (an executable or a .jar), or $null if it cannot be
 # found. Resolution order: env override -> PATH probe -> candidate paths.
+# Test-ToolPython3 <path>
+# True only when <path> is a working Python 3.
+#
+# Presence is not evidence on Windows. The Microsoft Store installs an
+# app-execution alias named python3 into %LOCALAPPDATA%\Microsoft\
+# WindowsApps: a real file that Get-Command finds and that exits 49 with
+# no output, opening the Store when run from a prompt. python.org's
+# Windows installer, meanwhile, creates python.exe and pythonw.exe but
+# never a python3.exe - only a python3.dll - so the NAME python3 can
+# resolve to the stub and to nothing else, however many real
+# interpreters are installed. Mirrors _tools_verify_python3 in tools.sh.
+function Test-ToolPython3 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        $out = & $Path -c 'import sys; print(sys.version_info[0])' 2>$null
+    } catch {
+        return $false
+    }
+    if ($LASTEXITCODE -ne 0) { return $false }
+    return (($out | Select-Object -First 1) -ceq '3')
+}
+
+# Test-ToolAcceptable <id> <path>
+# True when <path> is not merely present but usable as <id>.
+#
+# Only consulted for probe hits and candidate paths - the guesses. An
+# explicit env override is a statement of intent and is honoured as
+# given. Mirrors _tools_accept in tools.sh.
+function Test-ToolAcceptable {
+    param(
+        [Parameter(Mandatory = $true)][string]$Id,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    $verify = Get-ToolField -Id $Id -Column 'verify'
+    if ($null -eq $verify -or $verify -ceq '-' -or $verify -ceq '') { return $true }
+    switch -CaseSensitive ($verify) {
+        'python3' { return (Test-ToolPython3 -Path $Path) }
+        default {
+            # An unrecognised verifier name is a manifest error.
+            # Accepting anyway would silently downgrade to no
+            # verification, which is what this column exists to prevent.
+            Write-Error "Tools.ps1: tools.psv names an unknown verify '$verify' for tool '$Id'"
+            return $false
+        }
+    }
+}
+
 function Resolve-Tool {
     param([Parameter(Mandatory = $true)][string]$Id)
 
@@ -153,7 +200,12 @@ function Resolve-Tool {
     if ($probe -cne '-') {
         foreach ($p in ($probe -split ',')) {
             $cmd = Get-Command $p -CommandType Application -ErrorAction SilentlyContinue
-            if ($cmd -and $cmd.Source) {
+            # Keep going past a name that exists but does not work: on
+            # Windows the first name in python3's probe list resolves to
+            # the Store stub every time, and stopping there reported
+            # [MISSING] on machines with a working Python installed
+            # under a different name.
+            if ($cmd -and $cmd.Source -and (Test-ToolAcceptable -Id $Id -Path $cmd.Source)) {
                 # A jar-kind tool (per tools.psv) can still be found on PATH
                 # as a real CLI launcher (e.g. a package manager's
                 # `vineflower` script) rather than the raw .jar this
@@ -185,7 +237,8 @@ function Resolve-Tool {
             # way bash's `[ -f ]` does.
             if (-not $c) { continue }
             $expanded = Expand-ToolPlaceholders -Value $c
-            if (Test-Path -LiteralPath $expanded -PathType Leaf) {
+            if ((Test-Path -LiteralPath $expanded -PathType Leaf) -and
+                (Test-ToolAcceptable -Id $Id -Path $expanded)) {
                 return [pscustomobject]@{ Kind = $kind; Path = $expanded }
             }
         }

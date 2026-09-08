@@ -1,4 +1,4 @@
 FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/tools.psv
-FIND:jadx|required|all|path|jadx|JADX_BIN|{HOME}/.local/share/jadx/bin/jadx;{HOME}/.local/share/jadx/bin/jadx.bat;{HOME}/jadx/bin/jadx.bat;{LOCALAPPDATA}/jadx/bin/jadx.bat|skylot/jadx|jadx-{VERSION}.zip|1.5.6|sha256:545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974|Primary decompiler for APK, DEX, AAB, XAPK and APKM
-REPLACE:jadx|required|all|path|jadx|JADX_BIN|{HOME}/.local/share/jadx/bin/jadx|skylot/jadx|jadx-{VERSION}.zip|1.5.6|sha256:545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974|Primary decompiler for APK, DEX, AAB, XAPK and APKM
+FIND:jadx|required|all|path|jadx|-|JADX_BIN|{HOME}/.local/share/jadx/bin/jadx;{HOME}/.local/share/jadx/bin/jadx.bat;{HOME}/jadx/bin/jadx.bat;{LOCALAPPDATA}/jadx/bin/jadx.bat|skylot/jadx|jadx-{VERSION}.zip|1.5.6|sha256:545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974|Primary decompiler for APK, DEX, AAB, XAPK and APKM
+REPLACE:jadx|required|all|path|jadx|-|JADX_BIN|{HOME}/.local/share/jadx/bin/jadx|skylot/jadx|jadx-{VERSION}.zip|1.5.6|sha256:545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974|Primary decompiler for APK, DEX, AAB, XAPK and APKM
 EXPECT:lists exactly the expected 4 candidates

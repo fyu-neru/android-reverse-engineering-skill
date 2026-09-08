@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/tools.sh
+FIND:  [ "$out" = "3" ]
+REPLACE:  return 0
+EXPECT:tool_resolve: a probe name that runs successfully but answers as Python 2 is rejected too

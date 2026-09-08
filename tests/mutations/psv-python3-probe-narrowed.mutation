@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/tools.psv
+FIND:python3|optional|all|path|python3,python,py|python3|PYTHON3_BIN|-|-|-|-|-|embedded-Python runtime used by recover-kotlin-names.sh and lookup-name.sh (required starting 2.2.0)
+REPLACE:python3|optional|all|path|python3|python3|PYTHON3_BIN|-|-|-|-|-|embedded-Python runtime used by recover-kotlin-names.sh and lookup-name.sh (required starting 2.2.0)
+EXPECT:Task2 case 4: a stub named python3 alongside a working interpreter named python is reported [OK] via the working one

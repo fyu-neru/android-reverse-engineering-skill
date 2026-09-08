@@ -1,6 +1,18 @@
-id|required|platform|kind|probe|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
+id|required|platform|kind|probe|verify|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
 # Lines whose id starts with '#' are comments and are skipped by both readers.
 # Values must not contain '"' or '|'. Placeholders: {HOME}, {LOCALAPPDATA}, {VERSION}.
+# `probe` is a comma-separated list of names tried in order against PATH.
+# `verify` names a check each probe hit and candidate path must pass
+# before resolution accepts it; `-` means presence is enough. It exists
+# because presence is not always evidence: Windows resolves the name
+# `python3` to a Microsoft Store app-execution alias — a real file that
+# exits 49 with no interpreter behind it — and python.org's Windows
+# installer never creates a python3.exe at all, so on that platform the
+# name can find the stub and nothing else. Without verification,
+# resolution stopped there and check-deps reported python3 MISSING on
+# machines with a working Python installed as `python`. An explicit
+# env_override is honoured as given and is not verified.
+#
 # pin_digest values are the sha256 GitHub reports for the exact `pin`
 # version's release asset (the "digest" field on
 # `gh api repos/<gh_repo>/releases/latest`, retrieved 2026-09-03). They are
@@ -8,8 +20,8 @@ id|required|platform|kind|probe|env_override|candidates|gh_repo|asset|pin|pin_di
 # where the live API (and therefore its own per-asset digest) is
 # unreachable — see setup-guide.md's "Digest Verification" section for what
 # this does and does not protect against.
-java|required|all|path|java|JAVA_BIN|-|-|-|-|-|Java 17+ runtime, required by jadx and Vineflower
-jadx|required|all|path|jadx|JADX_BIN|{HOME}/.local/share/jadx/bin/jadx;{HOME}/.local/share/jadx/bin/jadx.bat;{HOME}/jadx/bin/jadx.bat;{LOCALAPPDATA}/jadx/bin/jadx.bat|skylot/jadx|jadx-{VERSION}.zip|1.5.6|sha256:545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974|Primary decompiler for APK, DEX, AAB, XAPK and APKM
-vineflower|optional|all|jar|vineflower,fernflower|VINEFLOWER_JAR|{HOME}/.local/share/vineflower/vineflower.jar;{HOME}/fernflower/build/libs/fernflower.jar;{HOME}/vineflower/build/libs/vineflower.jar;{HOME}/fernflower/fernflower.jar;{HOME}/vineflower/vineflower.jar|Vineflower/vineflower|vineflower-{VERSION}.jar|1.12.0|sha256:1dfcfe974395734fa467ce620661c7623d05ba83670de0529b1fbd63ff548b9d|better output on complex Java code
-adb|optional|all|path|adb|ADB_BIN|-|-|-|-|-|useful for pulling APKs from devices
-python3|optional|all|path|python3|PYTHON3_BIN|-|-|-|-|-|embedded-Python runtime used by recover-kotlin-names.sh and lookup-name.sh (required starting 2.2.0)
+java|required|all|path|java|-|JAVA_BIN|-|-|-|-|-|Java 17+ runtime, required by jadx and Vineflower
+jadx|required|all|path|jadx|-|JADX_BIN|{HOME}/.local/share/jadx/bin/jadx;{HOME}/.local/share/jadx/bin/jadx.bat;{HOME}/jadx/bin/jadx.bat;{LOCALAPPDATA}/jadx/bin/jadx.bat|skylot/jadx|jadx-{VERSION}.zip|1.5.6|sha256:545ea2be9c242511bc145755cf4bda2485ade42966e096f8b4d3da2a230e8974|Primary decompiler for APK, DEX, AAB, XAPK and APKM
+vineflower|optional|all|jar|vineflower,fernflower|-|VINEFLOWER_JAR|{HOME}/.local/share/vineflower/vineflower.jar;{HOME}/fernflower/build/libs/fernflower.jar;{HOME}/vineflower/build/libs/vineflower.jar;{HOME}/fernflower/fernflower.jar;{HOME}/vineflower/vineflower.jar|Vineflower/vineflower|vineflower-{VERSION}.jar|1.12.0|sha256:1dfcfe974395734fa467ce620661c7623d05ba83670de0529b1fbd63ff548b9d|better output on complex Java code
+adb|optional|all|path|adb|-|ADB_BIN|-|-|-|-|-|useful for pulling APKs from devices
+python3|optional|all|path|python3,python,py|python3|PYTHON3_BIN|-|-|-|-|-|embedded-Python runtime used by recover-kotlin-names.sh and lookup-name.sh (required starting 2.2.0)

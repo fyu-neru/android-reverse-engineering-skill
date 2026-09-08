@@ -182,7 +182,31 @@ foreach ($depId in (Get-ToolList -Want 'optional')) {
                 Write-Host "[MISSING] python3 was found at $($py3Resolved.Path) but is not a working interpreter (exit $py3ExitCode) - optional, $py3Purpose. On Windows, a 'python3' that opens the Microsoft Store instead of running is this stub, not a real interpreter."
                 $missingOptional += "python3"
             } else {
-                Write-Host "[MISSING] python3 not found (optional - $py3Purpose)"
+                # Resolve-Tool failing now means every name in the probe
+                # list either did not exist or did not answer as Python 3
+                # (the row carries verify=python3). If one of them does
+                # exist, name it: telling someone "not found" when they
+                # can see python3 on their own PATH sends them looking
+                # for the wrong problem entirely. Mirrors check-deps.sh.
+                $py3Found = $null
+                $py3Probe = Get-ToolField -Id 'python3' -Column 'probe'
+                if ($py3Probe -and $py3Probe -cne '-') {
+                    foreach ($py3Name in ($py3Probe -split ',')) {
+                        $py3Cmd = Get-Command $py3Name -CommandType Application -ErrorAction SilentlyContinue
+                        if ($py3Cmd -and $py3Cmd.Source) { $py3Found = $py3Cmd.Source; break }
+                    }
+                }
+                if ($py3Found) {
+                    try {
+                        & $py3Found -c "import sys" 2>$null | Out-Null
+                        $py3FoundExit = $LASTEXITCODE
+                    } catch {
+                        $py3FoundExit = 1
+                    }
+                    Write-Host "[MISSING] python3 was found at $py3Found but is not a working interpreter (exit $py3FoundExit) - optional, $py3Purpose. On Windows, a 'python3' that opens the Microsoft Store instead of running is this stub, not a real interpreter; python.org's installer provides 'python' and never 'python3'."
+                } else {
+                    Write-Host "[MISSING] python3 not found (optional - $py3Purpose)"
+                }
                 $missingOptional += "python3"
             }
         }

@@ -146,6 +146,11 @@ for _dep_id in $(tool_list optional); do
       # `python3` at a prompt with no args instead opens the Store). A bare
       # existence check cannot tell that apart from a real interpreter, so
       # this actually runs one.
+      # tool_resolve now runs each probe hit before accepting it (the
+      # python3 row carries verify=python3), so it walks past the Store
+      # stub to the next name in the list. An explicit PYTHON3_BIN is
+      # still honoured as given, so the interpreter check below stays —
+      # it is what keeps the [OK] line honest on that path.
       py3_purpose=$(tool_field python3 purpose)
       if py3_bin=$(tool_resolve python3); then
         if py3_check_output=$("$py3_bin" -c 'import sys; print(sys.version_info[0])' 2>/dev/null); then
@@ -161,7 +166,34 @@ for _dep_id in $(tool_list optional); do
           missing_optional+=("python3")
         fi
       else
-        echo "[MISSING] python3 not found (optional — $py3_purpose)"
+        # Resolution failing now means every name in the probe list
+        # either did not exist or did not answer as Python 3. If one of
+        # them does exist, name it: telling someone "not found" when
+        # they can see python3 on their own PATH sends them looking for
+        # the wrong problem entirely.
+        py3_found=""
+        py3_probe=$(tool_field python3 probe)
+        py3_oldifs="$IFS"
+        IFS=','
+        for py3_name in $py3_probe; do
+          IFS="$py3_oldifs"
+          if py3_where=$(command -v "$py3_name" 2>/dev/null); then
+            py3_found="$py3_where"
+            break
+          fi
+          IFS=','
+        done
+        IFS="$py3_oldifs"
+        if [ -n "$py3_found" ]; then
+          if "$py3_found" -c 'import sys' >/dev/null 2>&1; then
+            py3_found_status=0
+          else
+            py3_found_status=$?
+          fi
+          echo "[MISSING] python3 was found at $py3_found but is not a working interpreter (exit $py3_found_status) — optional, $py3_purpose. On Windows, a \"python3\" that opens the Microsoft Store instead of running is this stub, not a real interpreter; python.org's installer provides \"python\" and never \"python3\"."
+        else
+          echo "[MISSING] python3 not found (optional — $py3_purpose)"
+        fi
         missing_optional+=("python3")
       fi
       ;;

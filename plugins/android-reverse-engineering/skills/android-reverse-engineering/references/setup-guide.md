@@ -258,19 +258,37 @@ running anything. That app-execution-alias stub still resolves via `PATH`
 (`command -v python3` / `Get-Command python3` both find it), so a
 dependency check that only asks "is python3 on PATH" reports this stub as
 installed. Actually running it exits non-zero (49) immediately, with no
-version string on stdout — `check-deps.sh`/`check-deps.ps1` detect this by
-executing `python3 -c "import sys; print(sys.version_info[0])"` and
-requiring both a zero exit code and `3` as the output, so this exact stub
-is reported `[MISSING]`, not `[OK]`.
+version string on stdout — the resolution layer detects this by executing
+`<candidate> -c "import sys; print(sys.version_info[0])"` and requiring
+both a zero exit code and `3` as the output, so this exact stub is never
+accepted.
+
+**Installing Python does not give you a `python3` command on Windows.**
+python.org's installer creates `python.exe` and `pythonw.exe` — and a
+`python3.dll`, but no `python3.exe`. The Store stub therefore stays the
+only thing on `PATH` under that name even after a successful install.
+This is why `tools.psv`'s python3 row probes `python3,python,py` and
+carries `verify=python3`: resolution runs each name in turn and walks
+past any that does not answer as Python 3, instead of stopping at the
+first one that merely exists. Before that, `check-deps` reported
+`[MISSING] python3` on a machine with Python 3.12.10 installed.
 
 ### Verify
 
 ```bash
+# Linux / macOS
 python3 -c "import sys; print(sys.version_info)"
 ```
 
+```powershell
+# Windows — python3 is the Store stub even when Python is installed
+python -c "import sys; print(sys.version_info)"
+```
+
 If this opens the Microsoft Store instead of printing a version tuple, no
-interpreter is installed yet — install one with the commands above.
+interpreter is installed yet — install one with the commands above. To
+see what this plugin resolves, run `check-deps.sh` / `check-deps.ps1`:
+the `[OK] python3 <version>` line names the version it actually ran.
 
 ### adb (Android Debug Bridge)
 

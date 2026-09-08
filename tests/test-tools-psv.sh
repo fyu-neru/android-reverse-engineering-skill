@@ -448,6 +448,64 @@ while [ "$_jc_idx" -lt "${#jadx_cand_list[@]}" ]; do
 done
 
 # =====================================================================
+# Group 10b — a probe name that resolves but does not work must not end
+# the search.
+#
+# This is the Windows configuration the python3 row was written for and
+# got wrong. `python3` there is the Microsoft Store's app-execution
+# alias: a real 331KB file that command -v finds, which exits 49 with no
+# output and opens the Store when run. python.org's Windows installer
+# creates python.exe and pythonw.exe and never a python3.exe — only a
+# python3.dll — so the NAME python3 can resolve to the stub and to
+# nothing else, however many real interpreters are installed. Measured
+# on the machine this was written on, with Python 3.12.10 installed:
+#
+#   before:  [MISSING] python3 was found at ...\WindowsApps\python3 but
+#            is not a working interpreter (exit 49)
+#   after:   [OK] python3 3.12.10 detected
+#
+# The pair of assertions below isolates the mechanism: the same probe
+# list, the same two stubs, differing only in whether the row asks for
+# verification. Without that second assertion the first would also pass
+# if resolution had simply started preferring the later name.
+# =====================================================================
+vfy_root=$(new_tmpdir)
+vfy_lib="$vfy_root/skills/android-reverse-engineering/scripts/lib"
+mkdir -p "$vfy_lib"
+{
+  printf 'id|required|platform|kind|probe|verify|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose\n'
+  printf 'vchecked|optional|all|path|vstub,vreal|python3|-|-|-|-|-|-|row that asks for verification\n'
+  printf 'vplain|optional|all|path|vstub,vreal|-|-|-|-|-|-|-|identical row that does not\n'
+  printf 'vtwo|optional|all|path|vpy2,vreal|python3|-|-|-|-|-|-|first name runs fine but is not Python 3\n'
+} > "$vfy_lib/tools.psv"
+
+vfy_bin=$(new_tmpdir)
+make_stub_bin "$vfy_bin" vstub 'exit 49'
+make_stub_bin "$vfy_bin" vreal 'echo 3
+exit 0'
+# Exits 0 and answers cleanly — just not as Python 3. A verifier that
+# only asked "did it run?" would accept this, which is the difference
+# between a stub (does not run) and a wrong interpreter (runs, wrong
+# major version). `python` still being Python 2 is exactly this case.
+make_stub_bin "$vfy_bin" vpy2 'echo 2
+exit 0'
+
+vfy_checked=$(CLAUDE_PLUGIN_ROOT="$vfy_root" TOOLS_SH_PATH="$TOOLS_SH" PATH="$vfy_bin:$PATH" \
+  "${BASH:-bash}" -c '. "$TOOLS_SH_PATH"; tool_resolve vchecked')
+assert_equals "$vfy_checked" "$vfy_bin/vreal" \
+  "[all] tool_resolve: a probe name that exists but fails its verify check is passed over for the next name in the list"
+
+vfy_plain=$(CLAUDE_PLUGIN_ROOT="$vfy_root" TOOLS_SH_PATH="$TOOLS_SH" PATH="$vfy_bin:$PATH" \
+  "${BASH:-bash}" -c '. "$TOOLS_SH_PATH"; tool_resolve vplain')
+assert_equals "$vfy_plain" "$vfy_bin/vstub" \
+  "[all] tool_resolve: with no verify value the same probe list still stops at the first name that exists (so the assertion above is about verification, not probe ordering)"
+
+vfy_two=$(CLAUDE_PLUGIN_ROOT="$vfy_root" TOOLS_SH_PATH="$TOOLS_SH" PATH="$vfy_bin:$PATH" \
+  "${BASH:-bash}" -c '. "$TOOLS_SH_PATH"; tool_resolve vtwo')
+assert_equals "$vfy_two" "$vfy_bin/vreal" \
+  "[all] tool_resolve: a probe name that runs successfully but answers as Python 2 is rejected too (verification checks the version, not merely that something ran)"
+
+# =====================================================================
 # Group 11 (2.0.0 fix wave, I2) — a tools.psv saved with CRLF line endings
 # must not silently break tools.sh's last-column lookups. `IFS= read -r
 # header` keeps a trailing \r on the line it reads, so before this fix the
@@ -542,9 +600,9 @@ elif command -v powershell >/dev/null 2>&1; then
 fi
 
 if ! is_windows_host; then
-  skip_group 27 "not running on a Windows host; skipping the [win] runtime cross-reader consistency group (Resolve-Tool/Get-ToolArgv/Expand-ToolPlaceholders on Tools.ps1 — 27 assertions require Windows executable-resolution semantics)."
+  skip_group 30 "not running on a Windows host; skipping the [win] runtime cross-reader consistency group (Resolve-Tool/Get-ToolArgv/Expand-ToolPlaceholders on Tools.ps1 — 30 assertions require Windows executable-resolution semantics)."
 elif [ -z "$PWSH_BIN" ]; then
-  skip_group 27 "on a Windows host but neither pwsh nor powershell found on PATH; skipping the same 27 [win] cross-reader assertions."
+  skip_group 30 "on a Windows host but neither pwsh nor powershell found on PATH; skipping the same 30 [win] cross-reader assertions."
 else
   cross_root=$(new_tmpdir)
   cross_lib="$cross_root/skills/android-reverse-engineering/scripts/lib"
@@ -726,6 +784,70 @@ EOF
 
   assert_contains "$porder_out" "RESOLVE=$porder_env_native" \
     "[win] Tools.ps1 resolution order: env override wins over PATH probe when both are present"
+
+  # =====================================================================
+  # Group 7b — Resolve-Tool must walk past a probe hit that resolves but
+  # does not work.
+  #
+  # Windows is the platform this exists for and the one it can be tested
+  # on: `python3` there is the Microsoft Store's app-execution alias,
+  # which Get-Command finds and which exits 49 with no output, while
+  # python.org's installer never creates a python3.exe at all. Stopping
+  # at the first name that resolves reported [MISSING] on this machine
+  # with Python 3.12.10 installed. The bash counterpart is Group 10b.
+  #
+  # Two rows over the same probe list and the same two stubs, differing
+  # only in whether verification is asked for — otherwise the first
+  # assertion would also pass if resolution had merely started
+  # preferring the later name.
+  # =====================================================================
+  vwin_root=$(new_tmpdir)
+  vwin_lib="$vwin_root/skills/android-reverse-engineering/scripts/lib"
+  mkdir -p "$vwin_lib"
+  cat > "$vwin_lib/tools.psv" <<'PSV'
+id|required|platform|kind|probe|verify|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
+vwinchecked|optional|all|path|vwin-stub-zzz,vwin-real-zzz|python3|-|-|-|-|-|-|row that asks for verification
+vwinplain|optional|all|path|vwin-stub-zzz,vwin-real-zzz|-|-|-|-|-|-|-|identical row that does not
+PSV
+
+  vwin_bin=$(new_tmpdir)
+  native_vwin_bin=$(to_native_path "$vwin_bin")
+  cat > "$vwin_bin/vwin-stub-zzz.cmd" <<'CMD'
+@echo off
+exit /b 49
+CMD
+  cat > "$vwin_bin/vwin-real-zzz.cmd" <<'CMD'
+@echo off
+echo 3
+exit /b 0
+CMD
+
+  native_vwin_root=$(to_native_path "$vwin_root")
+  vwin_script_dir=$(new_tmpdir)
+  vwin_script="$vwin_script_dir/vwin-check.ps1"
+  cat > "$vwin_script" <<'EOF'
+$ErrorActionPreference = 'Stop'
+$env:PATH = $env:STUB_BIN_DIR
+. $env:TOOLS_PS1_PATH
+$checked = Resolve-Tool -Id 'vwinchecked'
+$plain = Resolve-Tool -Id 'vwinplain'
+if ($null -eq $checked) { Write-Output 'CHECKED=<NULL>' } else { Write-Output ('CHECKED=' + $checked.Path) }
+if ($null -eq $plain) { Write-Output 'PLAIN=<NULL>' } else { Write-Output ('PLAIN=' + $plain.Path) }
+EOF
+
+  vwin_out=$(CLAUDE_PLUGIN_ROOT="$native_vwin_root" TOOLS_PS1_PATH="$native_tools_ps1" \
+    STUB_BIN_DIR="$native_vwin_bin" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$vwin_script" 2>&1 | tr -d '\r')
+
+  vwin_checked_line=$(printf '%s\n' "$vwin_out" | grep '^CHECKED=' || true)
+  vwin_plain_line=$(printf '%s\n' "$vwin_out" | grep '^PLAIN=' || true)
+  if [ -n "$vwin_checked_line" ]; then vwin_seen=present; else vwin_seen=absent; fi
+  assert_equals "$vwin_seen" "present" \
+    "[win] precondition: the Resolve-Tool verify probe script produced a CHECKED= line at all"
+  assert_contains "$vwin_checked_line" "vwin-real-zzz.cmd" \
+    "[win] Resolve-Tool: a probe name that exists but fails its verify check is passed over for the next name in the list"
+  assert_contains "$vwin_plain_line" "vwin-stub-zzz.cmd" \
+    "[win] Resolve-Tool: with no verify value the same probe list still stops at the first name that exists (so the assertion above is about verification, not probe ordering)"
 
   # =====================================================================
   # Group 7c (Task 4 review C1/I2) — Resolve-Tool must report Kind='cli'

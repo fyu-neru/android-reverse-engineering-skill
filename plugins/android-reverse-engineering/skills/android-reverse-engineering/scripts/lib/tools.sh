@@ -107,6 +107,49 @@ _tools_expand() {
 # tool_resolve <id>
 # Prints the single artifact path (an executable or a .jar). Returns 1 if
 # the tool cannot be found. Safe to quote.
+# _tools_verify_python3 <path>
+# True only when <path> is a working Python 3.
+#
+# Presence is not evidence here. Windows ships a Microsoft Store
+# app-execution alias named python3 in %LOCALAPPDATA%\Microsoft\
+# WindowsApps: a real 331KB file that `command -v` finds and that exits
+# 49 with no output, opening the Store when run from a prompt. And
+# python.org's Windows installer creates python.exe and pythonw.exe but
+# never a python3.exe — only a python3.dll — so on Windows the NAME
+# python3 can resolve to the stub and to nothing else, however many real
+# interpreters are installed. Measured on the machine this was written
+# on, with Python 3.12.10 installed: python3 -> the stub, exit 49;
+# python -> the real interpreter, exit 0.
+_tools_verify_python3() {
+  local out
+  out=$("$1" -c 'import sys; print(sys.version_info[0])' 2>/dev/null) || return 1
+  [ "$out" = "3" ]
+}
+
+# _tools_accept <id> <path>
+# True when <path> is not merely present but usable as <id>.
+#
+# Only consulted for probe hits and candidate paths — the guesses. An
+# explicit env override is a statement of intent and is honoured as
+# given; second-guessing it would silently substitute a different tool
+# for the one the caller named. Consumers that care (check-deps.sh) run
+# their own check on whatever they were handed and report on it.
+_tools_accept() {
+  local id="$1" path="$2" verify
+  verify=$(tool_field "$id" verify) || return 0
+  case "$verify" in
+    -|'') return 0 ;;
+    python3) _tools_verify_python3 "$path" ;;
+    *)
+      # An unrecognised verifier name is a manifest error. Accepting
+      # anyway would silently downgrade to no verification at all, which
+      # is the failure this column exists to prevent.
+      echo "tools.sh: tools.psv names an unknown verify '$verify' for tool '$id'" >&2
+      return 1
+      ;;
+  esac
+}
+
 tool_resolve() {
   local id="$1" env_name env_val probe candidates cand
   env_name=$(tool_field "$id" env_override) || return 1
@@ -123,14 +166,18 @@ tool_resolve() {
 
   probe=$(tool_field "$id" probe) || return 1
   if [ "$probe" != "-" ]; then
-    local oldifs="$IFS" oldopts="$-" p
+    local oldifs="$IFS" oldopts="$-" p p_path
     IFS=','
     set -f
     for p in $probe; do
       IFS="$oldifs"
-      if command -v "$p" >/dev/null 2>&1; then
+      # Keep going past a name that exists but does not work: on Windows
+      # the first name in python3's probe list resolves to the Store stub
+      # every time, and stopping there reported [MISSING] on machines
+      # with a working Python installed under a different name.
+      if p_path=$(command -v "$p" 2>/dev/null) && _tools_accept "$id" "$p_path"; then
         case "$oldopts" in *f*) ;; *) set +f ;; esac
-        command -v "$p"; return 0
+        printf '%s\n' "$p_path"; return 0
       fi
       IFS=','
     done
@@ -156,7 +203,7 @@ tool_resolve() {
         continue
       fi
       cand=$(_tools_expand "$c")
-      if [ -f "$cand" ]; then
+      if [ -f "$cand" ] && _tools_accept "$id" "$cand"; then
         case "$oldopts" in *f*) ;; *) set +f ;; esac
         printf '%s\n' "$cand"; return 0
       fi

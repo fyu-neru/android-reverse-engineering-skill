@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/tools.sh
+FIND:      if p_path=$(command -v "$p" 2>/dev/null) && _tools_accept "$id" "$p_path"; then
+REPLACE:      if p_path=$(command -v "$p" 2>/dev/null); then
+EXPECT:tool_resolve: a probe name that exists but fails its verify check is passed over
