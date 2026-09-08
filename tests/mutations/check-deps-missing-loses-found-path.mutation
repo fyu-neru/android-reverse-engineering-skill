@@ -1,4 +1,4 @@
 FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/check-deps.sh
-FIND:          if py3_where=$(command -v "$py3_name" 2>/dev/null); then
-REPLACE:        if false; then
+FIND:             py3_where=$(command -v "$py3_name" 2>/dev/null); then
+REPLACE:             false; then
 EXPECT:Task2 case 5: with only a stub present, the [MISSING] line names the path it found

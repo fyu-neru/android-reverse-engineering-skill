@@ -30,22 +30,6 @@ TOOLS_PS1="$LIB_DIR/Tools.ps1"
 TOOLS_PSV="$LIB_DIR/tools.psv"
 PLUGIN_ROOT="$REPO_ROOT/plugins/android-reverse-engineering"
 
-# to_native_path <posix-path>
-# Converts an MSYS/Git-Bash path (e.g. /d/foo) to Windows drive-letter form
-# (via cygpath -w) so the SAME literal path string can be embedded in a
-# fixture file and handed to both this bash process and a native pwsh.exe
-# child process with no translation surprises (a bare "/d/foo" means
-# nothing to a native Win32 filesystem call). On any platform with no
-# cygpath (Linux, macOS, native PowerShell there too) the path is already
-# in a form both sides understand, so it is returned unchanged.
-to_native_path() {
-  if command -v cygpath >/dev/null 2>&1; then
-    cygpath -w "$1"
-  else
-    printf '%s\n' "$1"
-  fi
-}
-
 # =====================================================================
 # Group 1 — non-empty precondition before comparing (§6.2 shape 1: "both
 # sides returned empty so they match" is the single most common way this
@@ -448,6 +432,48 @@ while [ "$_jc_idx" -lt "${#jadx_cand_list[@]}" ]; do
 done
 
 # =====================================================================
+# Group 10a — every verifier a tools.psv row asks for must be
+# implemented by BOTH readers, and the two readers must dispatch the
+# same set of names.
+#
+# The psv-field-drift guard above compares column NAMES across the
+# readers. Nothing compared the VALUES of the verify column against what
+# the readers can actually dispatch. A row naming a verifier only
+# tools.sh implements passes every other test in this file and then, on
+# Windows, falls into Test-ToolAcceptable's default arm — which rejects
+# the tool outright, so the row silently stops resolving on one platform
+# only. That is the exact shape of divergence Tools.ps1's own header
+# says the file exists to prevent.
+# =====================================================================
+sh_verifiers=$(awk '/^_tools_accept\(\)/{inf=1} inf && /^}/{inf=0} inf' "$TOOLS_SH" \
+  | grep -oE "^    [a-z0-9_]+\)" | tr -d ' )' | sort -u)
+ps1_verifiers=$(awk '/^function Test-ToolAcceptable/{inf=1} inf && /^}$/{inf=0} inf' "$TOOLS_PS1" \
+  | grep -oE "^        '[a-z0-9_]+'" | tr -d " '" | sort -u)
+
+assert_contains "$sh_verifiers" "python3" \
+  "[all] precondition: the verifier names were actually extracted from tools.sh (an empty list makes the comparison below vacuous)"
+assert_equals "$ps1_verifiers" "$sh_verifiers" \
+  "[all] static: tools.sh and Tools.ps1 dispatch the exact same set of verify names"
+
+psv_verify_missing=""
+psv_verify_values=$(awk -F'|' 'NR>1 && $1 !~ /^#/ && NF>6 {print $6}' "$TOOLS_PSV" | sort -u)
+for _pv in $psv_verify_values; do
+  case "$_pv" in
+    -|verify|'') continue ;;
+  esac
+  case "
+$sh_verifiers
+" in
+    *"
+$_pv
+"*) ;;
+    *) psv_verify_missing="$psv_verify_missing $_pv" ;;
+  esac
+done
+assert_equals "$psv_verify_missing" "" \
+  "[all] static: every verify value used by a tools.psv row is one the readers implement"
+
+# =====================================================================
 # Group 10b — a probe name that resolves but does not work must not end
 # the search.
 #
@@ -600,9 +626,9 @@ elif command -v powershell >/dev/null 2>&1; then
 fi
 
 if ! is_windows_host; then
-  skip_group 30 "not running on a Windows host; skipping the [win] runtime cross-reader consistency group (Resolve-Tool/Get-ToolArgv/Expand-ToolPlaceholders on Tools.ps1 — 30 assertions require Windows executable-resolution semantics)."
+  skip_group 34 "not running on a Windows host; skipping the [win] runtime cross-reader consistency group (Resolve-Tool/Get-ToolArgv/Expand-ToolPlaceholders on Tools.ps1 — 34 assertions require Windows executable-resolution semantics)."
 elif [ -z "$PWSH_BIN" ]; then
-  skip_group 30 "on a Windows host but neither pwsh nor powershell found on PATH; skipping the same 30 [win] cross-reader assertions."
+  skip_group 34 "on a Windows host but neither pwsh nor powershell found on PATH; skipping the same 34 [win] cross-reader assertions."
 else
   cross_root=$(new_tmpdir)
   cross_lib="$cross_root/skills/android-reverse-engineering/scripts/lib"
@@ -808,6 +834,7 @@ EOF
 id|required|platform|kind|probe|verify|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
 vwinchecked|optional|all|path|vwin-stub-zzz,vwin-real-zzz|python3|-|-|-|-|-|-|row that asks for verification
 vwinplain|optional|all|path|vwin-stub-zzz,vwin-real-zzz|-|-|-|-|-|-|-|identical row that does not
+vwintwo|optional|all|path|vwin-py2-zzz,vwin-real-zzz|python3|-|-|-|-|-|-|first name runs fine but is not Python 3
 PSV
 
   vwin_bin=$(new_tmpdir)
@@ -821,6 +848,15 @@ CMD
 echo 3
 exit /b 0
 CMD
+  # Exits 0 and answers cleanly — just not as Python 3. Without this the
+  # PowerShell verifier's `-ceq '3'` could be deleted outright and every
+  # test would still pass; the bash side has had this case since it was
+  # written.
+  cat > "$vwin_bin/vwin-py2-zzz.cmd" <<'CMD'
+@echo off
+echo 2
+exit /b 0
+CMD
 
   native_vwin_root=$(to_native_path "$vwin_root")
   vwin_script_dir=$(new_tmpdir)
@@ -831,8 +867,10 @@ $env:PATH = $env:STUB_BIN_DIR
 . $env:TOOLS_PS1_PATH
 $checked = Resolve-Tool -Id 'vwinchecked'
 $plain = Resolve-Tool -Id 'vwinplain'
+$two = Resolve-Tool -Id 'vwintwo'
 if ($null -eq $checked) { Write-Output 'CHECKED=<NULL>' } else { Write-Output ('CHECKED=' + $checked.Path) }
 if ($null -eq $plain) { Write-Output 'PLAIN=<NULL>' } else { Write-Output ('PLAIN=' + $plain.Path) }
+if ($null -eq $two) { Write-Output 'TWO=<NULL>' } else { Write-Output ('TWO=' + $two.Path) }
 EOF
 
   vwin_out=$(CLAUDE_PLUGIN_ROOT="$native_vwin_root" TOOLS_PS1_PATH="$native_tools_ps1" \
@@ -848,6 +886,81 @@ EOF
     "[win] Resolve-Tool: a probe name that exists but fails its verify check is passed over for the next name in the list"
   assert_contains "$vwin_plain_line" "vwin-stub-zzz.cmd" \
     "[win] Resolve-Tool: with no verify value the same probe list still stops at the first name that exists (so the assertion above is about verification, not probe ordering)"
+
+  vwin_two_line=$(printf '%s\n' "$vwin_out" | grep '^TWO=' || true)
+  assert_contains "$vwin_two_line" "vwin-real-zzz.cmd" \
+    "[win] Resolve-Tool: a probe name that runs successfully but answers as Python 2 is rejected too (verification checks the version, not merely that something ran)"
+
+  # =====================================================================
+  # Group 7b-2 — ONE probe name, present in more than one PATH directory.
+  #
+  # Get-Command returns every match, not the first: on the machine this
+  # was written on, `Get-Command python -CommandType Application` returns
+  # two — the real Python312 install and the WindowsApps Store alias.
+  # $cmd.Source is then an Object[], and passing it to a [string]
+  # parameter raises a terminating parameter-binding error under this
+  # project's $ErrorActionPreference = 'Stop'. check-deps.ps1 died at
+  # `Resolve-Tool -Id 'python3'` with no python3 line, no
+  # INSTALL_OPTIONAL: lines, no summary and exit 1 — on exactly the
+  # configuration the verify column was added to fix.
+  #
+  # The fixture above could not see it: one directory on PATH, one file
+  # per name, so Get-Command always returned a single match. This one
+  # puts the same name in two directories, which is what the real PATH
+  # looks like.
+  #
+  # Order matters too. Here — as on the real machine — the WORKING one
+  # is not the only match, so resolution has to walk the matches rather
+  # than take one and hope.
+  vdup_root=$(new_tmpdir)
+  vdup_lib="$vdup_root/skills/android-reverse-engineering/scripts/lib"
+  mkdir -p "$vdup_lib"
+  cat > "$vdup_lib/tools.psv" <<'PSV'
+id|required|platform|kind|probe|verify|env_override|candidates|gh_repo|asset|pin|pin_digest|purpose
+vdup|optional|all|path|vdup-zzz|python3|-|-|-|-|-|-|one name, two PATH directories
+PSV
+
+  vdup_first=$(new_tmpdir)
+  vdup_second=$(new_tmpdir)
+  cat > "$vdup_first/vdup-zzz.cmd" <<'CMD'
+@echo off
+exit /b 49
+CMD
+  cat > "$vdup_second/vdup-zzz.cmd" <<'CMD'
+@echo off
+echo 3
+exit /b 0
+CMD
+
+  native_vdup_root=$(to_native_path "$vdup_root")
+  native_vdup_first=$(to_native_path "$vdup_first")
+  native_vdup_second=$(to_native_path "$vdup_second")
+
+  vdup_script_dir=$(new_tmpdir)
+  vdup_script="$vdup_script_dir/vdup-check.ps1"
+  cat > "$vdup_script" <<'EOF'
+$ErrorActionPreference = 'Stop'
+$env:PATH = $env:STUB_BIN_DIR_1 + ';' + $env:STUB_BIN_DIR_2
+. $env:TOOLS_PS1_PATH
+$matches = @(Get-Command 'vdup-zzz' -CommandType Application -ErrorAction SilentlyContinue)
+Write-Output ('MATCHES=' + $matches.Count)
+$r = Resolve-Tool -Id 'vdup'
+if ($null -eq $r) { Write-Output 'RESOLVE=<NULL>' } else { Write-Output ('RESOLVE=' + $r.Path) }
+EOF
+
+  vdup_out=$(CLAUDE_PLUGIN_ROOT="$native_vdup_root" TOOLS_PS1_PATH="$native_tools_ps1" \
+    STUB_BIN_DIR_1="$native_vdup_first" STUB_BIN_DIR_2="$native_vdup_second" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$vdup_script" 2>&1 | tr -d '\r')
+
+  vdup_matches_line=$(printf '%s\n' "$vdup_out" | grep '^MATCHES=' || true)
+  vdup_resolve_line=$(printf '%s\n' "$vdup_out" | grep '^RESOLVE=' || true)
+  assert_equals "$vdup_matches_line" "MATCHES=2" \
+    "[win] precondition: the fixture really does give Get-Command two matches for one probe name (otherwise the assertion below cannot exercise the array case at all)"
+  if [ -n "$vdup_resolve_line" ]; then vdup_seen=present; else vdup_seen=absent; fi
+  assert_equals "$vdup_seen" "present" \
+    "[win] precondition: Resolve-Tool returned rather than aborting on a probe name with several PATH matches"
+  assert_contains "$vdup_resolve_line" "$(to_native_path "$vdup_second")" \
+    "[win] Resolve-Tool: with one probe name matching several PATH entries, every match is verified until one passes"
 
   # =====================================================================
   # Group 7c (Task 4 review C1/I2) — Resolve-Tool must report Kind='cli'

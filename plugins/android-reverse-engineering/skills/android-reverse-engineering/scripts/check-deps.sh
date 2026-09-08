@@ -172,18 +172,27 @@ for _dep_id in $(tool_list optional); do
         # they can see python3 on their own PATH sends them looking for
         # the wrong problem entirely.
         py3_found=""
-        py3_probe=$(tool_field python3 probe)
+        py3_probe=$(tool_field python3 probe) || py3_probe="-"
         py3_oldifs="$IFS"
+        py3_oldopts="$-"
         IFS=','
+        # set -f for the same reason every other comma/semicolon split in
+        # this plugin does it: an unquoted expansion is subject to
+        # pathname expansion as well as word splitting, so a probe value
+        # containing a glob character would be rewritten into whatever
+        # happened to match in the current directory.
+        set -f
         for py3_name in $py3_probe; do
           IFS="$py3_oldifs"
-          if py3_where=$(command -v "$py3_name" 2>/dev/null); then
+          if [ -n "$py3_name" ] && [ "$py3_name" != "-" ] &&
+             py3_where=$(command -v "$py3_name" 2>/dev/null); then
             py3_found="$py3_where"
             break
           fi
           IFS=','
         done
         IFS="$py3_oldifs"
+        case "$py3_oldopts" in *f*) ;; *) set +f ;; esac
         if [ -n "$py3_found" ]; then
           if "$py3_found" -c 'import sys' >/dev/null 2>&1; then
             py3_found_status=0

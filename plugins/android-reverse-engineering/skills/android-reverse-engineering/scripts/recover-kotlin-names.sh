@@ -43,7 +43,25 @@ OUT="${2:-$(dirname "$SRC")/mapping}"
 
 mkdir -p "$OUT/by_package"
 
-python3 - "$SRC" "$OUT" <<'PY'
+# Resolve the interpreter through lib/tools.sh instead of invoking a bare
+# `python3`. On Windows that name resolves only to the Microsoft Store's
+# app-execution stub — a real file that runs and exits 49 — because
+# python.org's installer provides `python` and never a python3.exe. A
+# bare call therefore runs the stub and fails on exactly the machine
+# check-deps.sh has just reported `[OK] python3` for, which would make
+# that report describe an interpreter nothing here actually uses.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/tools.sh
+. "$SCRIPT_DIR/lib/tools.sh"
+
+if ! PY3_BIN=$(tool_resolve python3); then
+  echo "recover-kotlin-names.sh: no working Python 3 interpreter found." >&2
+  echo "  This script is embedded Python and cannot run without one." >&2
+  echo "  Run check-deps.sh to see what was probed and how to install one." >&2
+  exit 1
+fi
+
+"$PY3_BIN" - "$SRC" "$OUT" <<'PY'
 import os, re, sys, json
 from collections import defaultdict
 

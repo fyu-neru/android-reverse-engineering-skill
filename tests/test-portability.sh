@@ -147,6 +147,28 @@ scan "no find -printf in tests/lib (GNU only)" '\bfind\b[^|]*-printf' "$REPO_ROO
 scan "no grep -oP / -P in tests/lib (GNU only)" 'grep[^|]*[[:space:]]-[a-zA-Z]*P\b' "$REPO_ROOT/tests/lib"
 scan "no readlink -f in tests/lib (GNU only)" '\breadlink[[:space:]]+-f\b' "$REPO_ROOT/tests/lib"
 
+# --- PowerShell guard: every `Get-Command ... -CommandType Application`
+# must be wrapped in @().
+#
+# Get-Command returns EVERY match on PATH. On a Windows box with a real
+# Python install alongside the Microsoft Store alias, `Get-Command
+# python -CommandType Application` returns two — so an unwrapped
+# $cmd.Source is an Object[]. Binding that to a [string] parameter is a
+# terminating error under this project's $ErrorActionPreference =
+# 'Stop', and it killed check-deps.ps1 outright before it could report
+# python3 at all; comparing it with -eq silently becomes an array filter
+# instead of the scalar comparison it reads as.
+#
+# Both are invisible to a fixture that puts one file per name in one
+# directory, which is what every PowerShell fixture here did. A static
+# scan does not depend on the fixture's shape.
+gc_unwrapped=$(grep -nE 'Get-Command [^|]*-CommandType Application' \
+  "$SCRIPT_DIR"/*.ps1 "$SCRIPT_DIR"/lib/*.ps1 2>/dev/null \
+  | grep -v '@(Get-Command' \
+  | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' || true)
+assert_equals "$gc_unwrapped" "" \
+  "[all] static: every Get-Command -CommandType Application in the PowerShell scripts is wrapped in @() (it returns every PATH match, not one)"
+
 # --- mutation-manifest guard: every .mutation's FIND: line must still
 # match exactly one line of the file it names.
 #
@@ -174,6 +196,16 @@ stale_mutations() {
   for m in "$mdir"/*.mutation; do
     [ -f "$m" ] || continue
     m_name=$(basename "$m")
+    # run-mutations.sh names the mutation it currently has injected.
+    # That one's FIND: is gone from its target on purpose — checking it
+    # would fail on every mutation the runner tries, and for a mutation
+    # whose own guard no longer fires it would become the only failure,
+    # turning a clean survivor report into "went RED via the wrong
+    # assertion".
+    if [ -n "${ARE_MUTATION_IN_FLIGHT:-}" ] &&
+       [ "$m_name" = "${ARE_MUTATION_IN_FLIGHT}.mutation" ]; then
+      continue
+    fi
     m_file=$(grep '^FILE:' "$m" | sed 's/^FILE://' | tail -1)
     if [ -z "$m_file" ]; then
       stale="$stale $m_name(no-FILE)"

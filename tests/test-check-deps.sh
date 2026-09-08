@@ -5,7 +5,8 @@ set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPT="$REPO_ROOT/plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/check-deps.sh"
+SCRIPTS_DIR_PS="$REPO_ROOT/plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts"
+SCRIPT="$SCRIPTS_DIR_PS/check-deps.sh"
 DECOMPILE_SCRIPT="$REPO_ROOT/plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh"
 
 # --- D4: Java version parsing must not depend on GNU grep -oP ---
@@ -129,19 +130,38 @@ TOOLS_SH_CD="$PLUGIN_ROOT_CD/skills/android-reverse-engineering/scripts/lib/tool
 py3_probe_names=$(CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT_CD" TOOLS_SH_PATH="$TOOLS_SH_CD" \
   "${BASH:-bash}" -c '. "$TOOLS_SH_PATH"; tool_field python3 probe')
 
+# This file runs under `set -uo pipefail` with no -e, so a failed
+# subshell above would leave py3_probe_names empty — and then the scrub
+# loop, the leak loop and the leak assertion would all iterate nothing
+# and pass while the PATH stayed completely unscrubbed. Prove the read
+# worked before relying on it.
+assert_contains "$py3_probe_names" "python3" \
+  "[all] Task2 precondition: the probe list was actually read from tools.psv (an empty one makes every scrub below a silent no-op, and the leak check below vacuous)"
+
 sc_probe_oldpath="$PATH"
 sc_probe_oldifs="$IFS"
+sc_scrub_failed=""
 IFS=','
 for sc_probe_name in $py3_probe_names; do
   IFS="$sc_probe_oldifs"
   if [ -n "$sc_probe_name" ] && [ "$sc_probe_name" != "-" ]; then
-    PATH=$(path_without_command "$sc_probe_name")
+    # path_without_command fails loudly rather than hand back a PATH that
+    # silently lost a directory's tools; discarding that status here
+    # would put the lie straight back.
+    if sc_scrubbed=$(path_without_command "$sc_probe_name"); then
+      PATH="$sc_scrubbed"
+    else
+      sc_scrub_failed="$sc_scrub_failed $sc_probe_name"
+    fi
   fi
   IFS=','
 done
 IFS="$sc_probe_oldifs"
 path_no_py3="$PATH"
 PATH="$sc_probe_oldpath"
+
+assert_equals "$sc_scrub_failed" "" \
+  "[all] Task2 precondition: path_without_command succeeded for every probed name (a failure there means the fixture PATH is missing tools, not just Python)"
 
 # A fixture that still resolves one of those names would make every
 # [MISSING] assertion below meaningless, so prove it does not.
@@ -246,6 +266,85 @@ assert_equals "$py3_seen_case5" "present" \
   "[all] Task2 case 5 precondition: check-deps.sh emitted a python3 status line at all"
 assert_contains "$py3_line_case5" "$bin_py3_stub_only/python3" \
   "[all] Task2 case 5: with only a stub present, the [MISSING] line names the path it found rather than claiming python3 is not there"
+
+# Case 6 — PYTHON3_BIN is honoured exactly as given, deliberately.
+# An override states intent; resolution quietly substituting a different
+# interpreter for the one the caller named would be worse than reporting
+# on theirs. That makes check-deps.sh's own interpreter check the ONLY
+# thing between an override pointing at a stub and an [OK] line, now
+# that the probe path can no longer produce that situation itself.
+#
+# Before this case existed, check-deps-python3-stub-not-executed.mutation
+# guarded nothing: with verification moved into the resolver, neutering
+# check-deps' check left every probe-path assertion still passing, and
+# the mutation reported as a survivor on CI.
+bin_py3_override=$(new_tmpdir)
+make_stub_bin "$bin_py3_override" python3 'exit 49'
+
+out_py3_case6=$(PATH="$path_no_py3" PYTHON3_BIN="$bin_py3_override/python3" \
+  "${BASH:-bash}" "$SCRIPT" 2>&1)
+py3_line_case6=$(printf '%s\n' "$out_py3_case6" | grep -E '^\[(OK|MISSING)\].*python3' || true)
+if [ -n "$py3_line_case6" ]; then py3_seen_case6=present; else py3_seen_case6=absent; fi
+assert_equals "$py3_seen_case6" "present" \
+  "[all] Task2 case 6 precondition: check-deps.sh emitted a python3 status line at all (the not-contains below is vacuous against an empty one)"
+assert_not_contains "$py3_line_case6" "[OK]" \
+  "[all] Task2 case 6: a PYTHON3_BIN override pointing at a stub is not reported [OK] — the override is honoured unverified, so check-deps' own interpreter check is the only guard left on that path"
+
+# =====================================================================
+# check-deps.ps1's python3 branch, run for real.
+#
+# Until this existed, those lines were syntax-checked and nothing more,
+# and that is exactly how two defects shipped green: Get-Command returns
+# EVERY PATH match, so `$cmd.Source` was an Object[] whenever a probed
+# name existed in two directories — which is the normal state of
+# `python` on a Windows box with a real install alongside the Store
+# alias. Binding that to a [string] parameter is a terminating error
+# under $ErrorActionPreference = 'Stop', and check-deps.ps1 died at
+# `Resolve-Tool -Id 'python3'` with no python3 line, no
+# INSTALL_OPTIONAL: lines, no summary and exit 1.
+#
+# This is the [win] counterpart of case 5 above: with only a stub
+# present, the [MISSING] line has to name the path it found.
+# =====================================================================
+PWSH_BIN=""
+if command -v pwsh >/dev/null 2>&1; then
+  PWSH_BIN="pwsh"
+elif command -v powershell >/dev/null 2>&1; then
+  PWSH_BIN="powershell"
+fi
+
+# What this can and cannot control: check-deps.ps1 deliberately refreshes
+# $env:PATH from the User environment variable on startup, so that tools
+# installed during the same session are picked up. A caller therefore
+# cannot narrow the PATH it searches, and asserting [MISSING] here would
+# be asserting something about this machine's own Python rather than
+# about the script. What IS controllable, and what actually broke, is
+# whether the script reaches its own output at all.
+if ! is_windows_host; then
+  skip_group 2 "not running on a Windows host; skipping the [win] check-deps.ps1 completion checks (2 assertions need a real PowerShell host)."
+elif [ -z "$PWSH_BIN" ]; then
+  skip_group 2 "on a Windows host but neither pwsh nor powershell found on PATH; skipping the same 2 [win] check-deps.ps1 assertions."
+else
+  native_check_deps_ps1=$(to_native_path "$SCRIPTS_DIR_PS/check-deps.ps1")
+  cdps_script_dir=$(new_tmpdir)
+  cdps_script="$cdps_script_dir/cdps-run.ps1"
+  cat > "$cdps_script" <<'EOF'
+$ErrorActionPreference = 'Continue'
+& $env:CHECK_DEPS_PS1 2>&1 | ForEach-Object { Write-Output $_ }
+EOF
+
+  cdps_out=$(CHECK_DEPS_PS1="$native_check_deps_ps1" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$cdps_script" 2>&1 | tr -d '\r')
+
+  cdps_py3_line=$(printf '%s\n' "$cdps_out" | grep -E '^\[(OK|MISSING)\].*python3' || true)
+  if [ -n "$cdps_py3_line" ]; then cdps_seen=present; else cdps_seen=absent; fi
+  assert_equals "$cdps_seen" "present" \
+    "[win] check-deps.ps1 emits a python3 status line at all (an unwrapped Get-Command made \$cmd.Source an Object[] on any machine where a probed name has two PATH matches, and binding that to a [string] parameter aborted the script here)"
+  cdps_summary=$(printf '%s\n' "$cdps_out" | grep -E "dependenc(y|ies)" || true)
+  if [ -n "$cdps_summary" ]; then cdps_finished=yes; else cdps_finished=no; fi
+  assert_equals "$cdps_finished" "yes" \
+    "[win] check-deps.ps1 runs through to its dependency summary rather than dying partway (the abort left no summary and no INSTALL_ lines at all)"
+fi
 
 cleanup_tmpdirs
 print_summary

@@ -1,4 +1,4 @@
 FILE:tests/test-check-deps.sh
-FIND:    PATH=$(path_without_command "$sc_probe_name")
-REPLACE:    :
+FIND:      PATH="$sc_scrubbed"
+REPLACE:      :
 EXPECT:Task2 precondition: the scrubbed PATH resolves none of the names tools.psv's python3 row probes for

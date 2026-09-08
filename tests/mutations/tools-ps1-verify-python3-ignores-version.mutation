@@ -1,0 +1,5 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/Tools.ps1
+FIND:    return (($out | Select-Object -First 1) -ceq '3')
+REPLACE:    return $true
+EXPECT:[win] Resolve-Tool: a probe name that runs successfully but answers as Python 2 is rejected too
+REQUIRES:windows

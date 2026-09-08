@@ -116,11 +116,20 @@ foreach ($depId in (Get-ToolList -Want 'optional')) {
                 if (-not $ffEnvVal -or $ffPath -ne $ffEnvVal) {
                     $ffProbe = Get-ToolField -Id 'vineflower' -Column 'probe'
                     foreach ($p in ($ffProbe -split ',')) {
-                        $cmd = Get-Command $p -CommandType Application -ErrorAction SilentlyContinue
-                        if ($cmd -and $cmd.Source -eq $ffPath) {
-                            $ffMatchedProbe = $p
-                            break
+                        # @() and an inner loop for the same reason as
+                        # Resolve-Tool: Get-Command returns every PATH
+                        # match. Unwrapped, `$cmd.Source -eq $ffPath` on
+                        # a multi-match name is an array comparison that
+                        # happens to work by filtering, which is a
+                        # different thing from what it looks like it
+                        # says.
+                        foreach ($cmd in @(Get-Command $p -CommandType Application -ErrorAction SilentlyContinue)) {
+                            if ($cmd.Source -eq $ffPath) {
+                                $ffMatchedProbe = $p
+                                break
+                            }
                         }
+                        if ($ffMatchedProbe) { break }
                     }
                 }
                 if ($ffMatchedProbe) {
@@ -192,8 +201,17 @@ foreach ($depId in (Get-ToolList -Want 'optional')) {
                 $py3Probe = Get-ToolField -Id 'python3' -Column 'probe'
                 if ($py3Probe -and $py3Probe -cne '-') {
                     foreach ($py3Name in ($py3Probe -split ',')) {
-                        $py3Cmd = Get-Command $py3Name -CommandType Application -ErrorAction SilentlyContinue
-                        if ($py3Cmd -and $py3Cmd.Source) { $py3Found = $py3Cmd.Source; break }
+                        # Same Object[] trap as Resolve-Tool: Get-Command
+                        # returns every PATH match, and this branch exists
+                        # to name exactly one path. Left unwrapped, the
+                        # message printed two paths joined by a space and
+                        # the `&` below threw CommandNotFoundException,
+                        # so the exit code it reports would have been the
+                        # fabricated 1 from the catch rather than the
+                        # interpreter's own.
+                        $py3Cmd = @(Get-Command $py3Name -CommandType Application -ErrorAction SilentlyContinue) |
+                            Where-Object { $_.Source } | Select-Object -First 1
+                        if ($py3Cmd) { $py3Found = $py3Cmd.Source; break }
                     }
                 }
                 if ($py3Found) {

@@ -1,5 +1,5 @@
 FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/Tools.ps1
-FIND:            if ($cmd -and $cmd.Source -and (Test-ToolAcceptable -Id $Id -Path $cmd.Source)) {
-REPLACE:            if ($cmd -and $cmd.Source) {
+FIND:                if (-not (Test-ToolAcceptable -Id $Id -Path $cmd.Source)) { continue }
+REPLACE:                if ($false) { continue }
 EXPECT:Resolve-Tool: a probe name that exists but fails its verify check is passed over
 REQUIRES:windows

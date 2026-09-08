@@ -311,8 +311,18 @@ for m in "$TESTS_DIR"/mutations/*.mutation; do
 
   run_out="$target.mutation-run-out"
   current_run_out="$run_out"
+  # Name the mutation currently applied, so the manifest guard in
+  # test-portability.sh can skip it. That guard checks every .mutation's
+  # FIND: still matches a line of its target — and while a mutation is
+  # injected, its own FIND is by definition gone. Without this the guard
+  # fails on every single mutation: harmless noise for one killed by its
+  # own EXPECT, but for a mutation whose real guard no longer fires it
+  # becomes the only failure, and the runner reports "suite went RED,
+  # but not via the expected guard" instead of a clean survivor.
+  export ARE_MUTATION_IN_FLIGHT="$name"
   run_suite_with_timeout "$run_out"
   mutation_status=$?
+  unset ARE_MUTATION_IN_FLIGHT
   mutation_output=$(cat "$run_out" 2>/dev/null)
   rm -f "$run_out"
   current_run_out=""

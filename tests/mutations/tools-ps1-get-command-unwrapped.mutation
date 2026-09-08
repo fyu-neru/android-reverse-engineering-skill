@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lib/Tools.ps1
+FIND:            foreach ($cmd in @(Get-Command $p -CommandType Application -ErrorAction SilentlyContinue)) {
+REPLACE:            foreach ($cmd in Get-Command $p -CommandType Application -ErrorAction SilentlyContinue) {
+EXPECT:static: every Get-Command -CommandType Application in the PowerShell scripts is wrapped in @()

@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/recover-kotlin-names.sh
+FIND:"$PY3_BIN" - "$SRC" "$OUT" <<'PY'
+REPLACE:python3 - "$SRC" "$OUT" <<'PY'
+EXPECT:recover-kotlin-names.sh runs the interpreter tool_resolve found, not a bare python3

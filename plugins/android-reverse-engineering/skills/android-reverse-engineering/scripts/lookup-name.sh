@@ -27,7 +27,21 @@ EOF
 DIR="$1"; shift
 [[ ! -f "$DIR/mapping.json" ]] && { echo "no mapping.json in $DIR" >&2; exit 1; }
 
-python3 - "$DIR" "$@" <<'PY'
+# Resolve the interpreter through lib/tools.sh rather than invoking a
+# bare `python3` — see the matching comment in recover-kotlin-names.sh.
+# On Windows the name python3 finds only the Microsoft Store stub.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/tools.sh
+. "$SCRIPT_DIR/lib/tools.sh"
+
+if ! PY3_BIN=$(tool_resolve python3); then
+  echo "lookup-name.sh: no working Python 3 interpreter found." >&2
+  echo "  This script is embedded Python and cannot run without one." >&2
+  echo "  Run check-deps.sh to see what was probed and how to install one." >&2
+  exit 1
+fi
+
+"$PY3_BIN" - "$DIR" "$@" <<'PY'
 import json, os, re, sys, subprocess
 DIR = sys.argv[1]
 args = sys.argv[2:]

@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/lookup-name.sh
+FIND:"$PY3_BIN" - "$DIR" "$@" <<'PY'
+REPLACE:python3 - "$DIR" "$@" <<'PY'
+EXPECT:lookup-name.sh runs the interpreter tool_resolve found, not a bare python3

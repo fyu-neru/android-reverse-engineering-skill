@@ -261,3 +261,19 @@ path_without_command() {
   done
   printf '%s\n' "$out"
 }
+
+# to_native_path <posix-path>
+# Converts an MSYS/Git-Bash path (e.g. /d/foo) to Windows drive-letter form
+# (via cygpath -w) so the SAME literal path string can be embedded in a
+# fixture file and handed to both this bash process and a native pwsh.exe
+# child process with no translation surprises (a bare "/d/foo" means
+# nothing to a native Win32 filesystem call). On any platform with no
+# cygpath (Linux, macOS, native PowerShell there too) the path is already
+# in a form both sides understand, so it is returned unchanged.
+to_native_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}

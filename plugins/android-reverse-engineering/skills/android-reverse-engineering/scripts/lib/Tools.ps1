@@ -127,10 +127,6 @@ function Get-ToolField {
     return $null
 }
 
-# Resolve-Tool -Id <id>
-# Returns [pscustomobject]@{ Kind = 'cli'|'jar'; Path = <string> } for the
-# resolved artifact (an executable or a .jar), or $null if it cannot be
-# found. Resolution order: env override -> PATH probe -> candidate paths.
 # Test-ToolPython3 <path>
 # True only when <path> is a working Python 3.
 #
@@ -144,12 +140,19 @@ function Get-ToolField {
 # interpreters are installed. Mirrors _tools_verify_python3 in tools.sh.
 function Test-ToolPython3 {
     param([Parameter(Mandatory = $true)][string]$Path)
+    # Clear $LASTEXITCODE first and treat "still unset" as failure. `&`
+    # on anything that is not a native executable — a .ps1, say — does
+    # not set it, so a stale 0 left by an earlier native call would sail
+    # through the check below. Today's probe path uses -CommandType
+    # Application so every candidate is native, but a verify-carrying row
+    # that gains `candidates` would reach this with an arbitrary path.
+    $global:LASTEXITCODE = $null
     try {
         $out = & $Path -c 'import sys; print(sys.version_info[0])' 2>$null
     } catch {
         return $false
     }
-    if ($LASTEXITCODE -ne 0) { return $false }
+    if ($null -eq $LASTEXITCODE -or $LASTEXITCODE -ne 0) { return $false }
     return (($out | Select-Object -First 1) -ceq '3')
 }
 
@@ -172,12 +175,26 @@ function Test-ToolAcceptable {
             # An unrecognised verifier name is a manifest error.
             # Accepting anyway would silently downgrade to no
             # verification, which is what this column exists to prevent.
-            Write-Error "Tools.ps1: tools.psv names an unknown verify '$verify' for tool '$Id'"
+            #
+            # -ErrorAction Continue, not a bare Write-Error: this project
+            # runs with $ErrorActionPreference = 'Stop', under which
+            # Write-Error terminates, `return $false` never executes and
+            # the whole calling script dies — where tools.sh merely
+            # prints the same line and carries on. That divergence is the
+            # class of bug this file's header says it exists to prevent,
+            # and the same trap was already fixed once here for
+            # Test-Path.
+            Write-Error -ErrorAction Continue `
+                "Tools.ps1: tools.psv names an unknown verify '$verify' for tool '$Id'"
             return $false
         }
     }
 }
 
+# Resolve-Tool -Id <id>
+# Returns [pscustomobject]@{ Kind = 'cli'|'jar'; Path = <string> } for the
+# resolved artifact (an executable or a .jar), or $null if it cannot be
+# found. Resolution order: env override -> PATH probe -> candidate paths.
 function Resolve-Tool {
     param([Parameter(Mandatory = $true)][string]$Id)
 
@@ -199,13 +216,27 @@ function Resolve-Tool {
     if ($null -eq $probe) { return $null }
     if ($probe -cne '-') {
         foreach ($p in ($probe -split ',')) {
-            $cmd = Get-Command $p -CommandType Application -ErrorAction SilentlyContinue
-            # Keep going past a name that exists but does not work: on
-            # Windows the first name in python3's probe list resolves to
-            # the Store stub every time, and stopping there reported
-            # [MISSING] on machines with a working Python installed
-            # under a different name.
-            if ($cmd -and $cmd.Source -and (Test-ToolAcceptable -Id $Id -Path $cmd.Source)) {
+            # Get-Command returns EVERY match on PATH, not just the first.
+            # On a machine with a real Python install alongside the Store
+            # alias, `Get-Command python -CommandType Application` returns
+            # two, and an unwrapped $cmd.Source is then an Object[] —
+            # binding that to a [string] parameter raises a terminating
+            # parameter-binding error under this project's
+            # $ErrorActionPreference = 'Stop', which killed check-deps.ps1
+            # outright before it could report python3 at all. @() plus a
+            # foreach keeps $cmd a single CommandInfo and, more usefully,
+            # lets verification walk the matches: on that machine the
+            # working interpreter and the stub are two matches of the same
+            # name, so taking any one of them and hoping is not enough.
+            foreach ($cmd in @(Get-Command $p -CommandType Application -ErrorAction SilentlyContinue)) {
+                # Keep going past a match that exists but does not work:
+                # on Windows the first name in python3's probe list
+                # resolves to the Store stub every time, and stopping
+                # there reported [MISSING] on machines with a working
+                # Python installed under a different name.
+                if (-not $cmd.Source) { continue }
+                if (-not (Test-ToolAcceptable -Id $Id -Path $cmd.Source)) { continue }
+
                 # A jar-kind tool (per tools.psv) can still be found on PATH
                 # as a real CLI launcher (e.g. a package manager's
                 # `vineflower` script) rather than the raw .jar this
