@@ -147,6 +147,91 @@ scan "no find -printf in tests/lib (GNU only)" '\bfind\b[^|]*-printf' "$REPO_ROO
 scan "no grep -oP / -P in tests/lib (GNU only)" 'grep[^|]*[[:space:]]-[a-zA-Z]*P\b' "$REPO_ROOT/tests/lib"
 scan "no readlink -f in tests/lib (GNU only)" '\breadlink[[:space:]]+-f\b' "$REPO_ROOT/tests/lib"
 
+# --- mutation-manifest guard: every .mutation's FIND: line must still
+# match exactly one line of the file it names.
+#
+# run-mutations.sh checks this itself (grep -cFx, ERROR on 0 or on more
+# than 1) — but only when it reaches that mutation, minutes into a run
+# that executes the entire suite once per mutation. Renaming two locals
+# inside tests/lib/harness.sh invalidated a FIND: here, run-tests.sh
+# stayed green, and the only thing that noticed was CI's mutation job,
+# seven minutes into the run after the push. A stale FIND is not a
+# runtime property; it is detectable by reading two files, so it is
+# checked here in under a second as well.
+#
+# grep -cFx, not -cF, to match run-mutations.sh exactly: FIND is a whole
+# line, and a substring check here would pass on drift that the real
+# runner then rejects.
+# stale_mutations <mutations-dir> <root>
+# Prints one token per drifted FIND:, empty when every mutation still
+# resolves. Taking both paths as arguments is what lets the self-tests
+# below drive it with a fixture — without them, the assertion could only
+# ever be exercised by the absence of a bug, and any mutation of this
+# scanner would survive unkilled.
+stale_mutations() {
+  local mdir="$1" root="$2" stale="" m m_name m_file m_find m_pair m_hits tmp
+  tmp=$(new_tmpdir)
+  for m in "$mdir"/*.mutation; do
+    [ -f "$m" ] || continue
+    m_name=$(basename "$m")
+    m_file=$(grep '^FILE:' "$m" | sed 's/^FILE://' | tail -1)
+    if [ -z "$m_file" ]; then
+      stale="$stale $m_name(no-FILE)"
+      continue
+    fi
+    if [ ! -f "$root/$m_file" ]; then
+      stale="$stale $m_name(no-such-file:$m_file)"
+      continue
+    fi
+    grep '^FIND:' "$m" | sed 's/^FIND://' > "$tmp/finds"
+    if [ ! -s "$tmp/finds" ]; then
+      stale="$stale $m_name(no-FIND)"
+      continue
+    fi
+    m_pair=0
+    while IFS= read -r m_find; do
+      m_pair=$((m_pair + 1))
+      m_hits=$(grep -cFx -- "$m_find" "$root/$m_file" || true)
+      if [ "$m_hits" != "1" ]; then
+        stale="$stale $m_name(pair$m_pair-matches-${m_hits}-lines)"
+      fi
+    done < "$tmp/finds"
+  done
+  echo "$stale"
+}
+
+assert_equals "$(stale_mutations "$REPO_ROOT/tests/mutations" "$REPO_ROOT")" "" \
+  "[all] every .mutation's FIND: still matches exactly one line of the file it names"
+
+# --- self-tests: the scanner must report a FIND: that no longer matches,
+# and stay quiet for one that does. Without these, the assertion above
+# passes purely because no mutation happens to be stale today, and any
+# reversion of the scanner itself would go unnoticed. ---
+sc_mut_root=$(new_tmpdir)
+mkdir -p "$sc_mut_root/src" "$sc_mut_root/muts"
+printf 'alpha\nbeta\n' > "$sc_mut_root/src/target.sh"
+
+printf 'FILE:src/target.sh\nFIND:alpha\nREPLACE::\nEXPECT:whatever\n' \
+  > "$sc_mut_root/muts/good.mutation"
+sc_mut_good=$(stale_mutations "$sc_mut_root/muts" "$sc_mut_root")
+assert_equals "$sc_mut_good" "" \
+  "stale_mutations() self-test: a FIND: that still matches exactly one line is not reported"
+
+printf 'FILE:src/target.sh\nFIND:gamma\nREPLACE::\nEXPECT:whatever\n' \
+  > "$sc_mut_root/muts/drifted.mutation"
+sc_mut_bad=$(stale_mutations "$sc_mut_root/muts" "$sc_mut_root")
+assert_contains "$sc_mut_bad" "drifted.mutation(pair1-matches-0-lines)" \
+  "stale_mutations() self-test: a FIND: matching nothing is reported, naming the mutation and the pair"
+
+# -x, not a substring match: run-mutations.sh uses grep -cFx, so a FIND:
+# that is only a substring of a line is drift the real runner rejects and
+# this scanner must not wave through.
+printf 'FILE:src/target.sh\nFIND:alph\nREPLACE::\nEXPECT:whatever\n' \
+  > "$sc_mut_root/muts/substring.mutation"
+sc_mut_sub=$(stale_mutations "$sc_mut_root/muts" "$sc_mut_root")
+assert_contains "$sc_mut_sub" "substring.mutation(pair1-matches-0-lines)" \
+  "stale_mutations() self-test: a FIND: that is only a substring of a line is reported, matching run-mutations.sh's whole-line semantics"
+
 # --- empty-array guard: ${arr[@]+"${arr[@]}"} sites ---
 # bash 3.2 errors on "${arr[@]}" under set -u when arr has zero elements
 # (fixed in bash 4.4); the guarded form ${arr[@]+"${arr[@]}"} is required
