@@ -2,3 +2,4 @@ FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scri
 FIND:    $envName = Get-ToolField -Id $Id -Column 'env_override'
 REPLACE:    $probe = Get-ToolField -Id $Id -Column 'probe'; if ($null -eq $probe) { return $null }; if ($probe -cne '-') { foreach ($p in ($probe -split ',')) { $cmd = Get-Command $p -CommandType Application -ErrorAction SilentlyContinue; if ($cmd -and $cmd.Source) { return [pscustomobject]@{ Kind = $kind; Path = $cmd.Source } } } }; $envName = Get-ToolField -Id $Id -Column 'env_override'
 EXPECT:Tools.ps1 resolution order: env override wins over PATH probe when both are present
+REQUIRES:windows

@@ -325,7 +325,14 @@ assert_contains "$out_mode_bad" "auto, restructure, simple, or fallback" \
 # used to discard Invoke-Vineflower's boolean return value as a bare
 # statement, so the refusal's $false never reached the script's exit
 # code and execution fell through to "=== Decompilation complete ===".
-# Only runs where pwsh/powershell exists.
+#
+# This whole block (D11, D13, D14, D17, D18, D19-D22, Task1's PS1
+# counterpart — 26 assertions) only runs on an actual Windows host.
+# Its stubs are .cmd/.bat files that only Windows executable resolution
+# (PATHEXT via `Get-Command -CommandType Application`) can find, and it
+# relies on USERPROFILE/C:\-rooted paths — none of which hold merely
+# because a pwsh interpreter happens to be on PATH (ubuntu-latest ships
+# pwsh, which is exactly what let these run-and-fail on Linux CI).
 PWSH_BIN=""
 if command -v pwsh >/dev/null 2>&1; then
   PWSH_BIN="pwsh"
@@ -333,8 +340,10 @@ elif command -v powershell >/dev/null 2>&1; then
   PWSH_BIN="powershell"
 fi
 
-if [ -z "$PWSH_BIN" ]; then
-  echo "SKIP: neither pwsh nor powershell found on PATH; skipping the [win] decompile.ps1 refusal-exit-code check."
+if ! is_windows_host; then
+  echo "SKIP: not running on a Windows host; skipping the [win] decompile.ps1 checks (D11, D13, D14, D17, D18, D19-D22, Task1 — 26 assertions require Windows executable-resolution semantics)."
+elif [ -z "$PWSH_BIN" ]; then
+  echo "SKIP: on a Windows host but neither pwsh nor powershell found on PATH; skipping the [win] decompile.ps1 checks."
 else
   PS1_SCRIPT="$SCRIPT_DIR/decompile.ps1"
   work11=$(new_tmpdir)

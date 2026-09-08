@@ -2,3 +2,4 @@ FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scri
 FIND:    if ($jadxExit -eq 0) { return 0 }
 REPLACE:    return 0
 EXPECT:D20: decompile.ps1 exits non-zero when jadx exits non-zero and produces zero Java output
+REQUIRES:windows

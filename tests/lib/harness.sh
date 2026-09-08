@@ -71,3 +71,29 @@ make_stub_bin() {
   } > "$dir/$name"
   chmod +x "$dir/$name"
 }
+
+# is_windows_host — true only when this shell is running on an actual
+# Windows host (Git-Bash/MSYS2, Cygwin), where Windows executable
+# resolution (PATHEXT finding a .cmd/.bat via `Get-Command
+# -CommandType Application`) and Windows-rooted paths/env vars
+# (C:\..., USERPROFILE) genuinely apply.
+#
+# This is deliberately NOT "does a pwsh/powershell interpreter exist on
+# PATH" — ubuntu-latest ships pwsh, so that gate let [win]-labeled
+# assertions run on Linux, where their .cmd/.bat stubs cannot execute
+# and USERPROFILE/C:\ paths mean nothing. The [win] blocks need "are we
+# on Windows", not "can we launch a PowerShell interpreter here".
+#
+# ARE_TESTS_FORCE_NOT_WINDOWS=1 forces this to report false regardless
+# of the actual host, so the reduced-coverage Linux/CI path (the [win]
+# blocks visibly SKIP:) can be exercised and verified from a real
+# Windows/MSYS machine without needing a Linux box.
+is_windows_host() {
+  if [ "${ARE_TESTS_FORCE_NOT_WINDOWS:-}" = "1" ]; then
+    return 1
+  fi
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) return 0 ;;
+    *) return 1 ;;
+  esac
+}

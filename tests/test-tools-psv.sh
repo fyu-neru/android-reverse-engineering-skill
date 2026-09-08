@@ -525,6 +525,14 @@ assert_equals "$crlf_out_bytes" "20" \
 #     LOCALAPPDATA-equivalent variable is pointed at the same native
 #     directory as HOME/USERPROFILE, and both must expand {LOCALAPPDATA}
 #     to a path resolving to the SAME file on disk.
+# This whole group (Group 7 onward — 27 assertions, covering Resolve-Tool,
+# Get-ToolArgv, and Expand-ToolPlaceholders on the PowerShell side) only
+# runs on an actual Windows host. Its fixtures depend on Windows
+# executable resolution (PATHEXT finding a .cmd stub via `Get-Command
+# -CommandType Application`) and Windows-rooted paths/env vars
+# (USERPROFILE, C:\...) — none of which hold merely because a pwsh
+# interpreter happens to be on PATH (ubuntu-latest ships pwsh, which is
+# exactly what let these run-and-fail on Linux CI).
 # =====================================================================
 PWSH_BIN=""
 if command -v pwsh >/dev/null 2>&1; then
@@ -533,8 +541,10 @@ elif command -v powershell >/dev/null 2>&1; then
   PWSH_BIN="powershell"
 fi
 
-if [ -z "$PWSH_BIN" ]; then
-  echo "SKIP: neither pwsh nor powershell found on PATH; skipping the [win] runtime cross-reader consistency group."
+if ! is_windows_host; then
+  echo "SKIP: not running on a Windows host; skipping the [win] runtime cross-reader consistency group (Resolve-Tool/Get-ToolArgv/Expand-ToolPlaceholders on Tools.ps1 — 27 assertions require Windows executable-resolution semantics)."
+elif [ -z "$PWSH_BIN" ]; then
+  echo "SKIP: on a Windows host but neither pwsh nor powershell found on PATH; skipping the [win] runtime cross-reader consistency group."
 else
   cross_root=$(new_tmpdir)
   cross_lib="$cross_root/skills/android-reverse-engineering/scripts/lib"

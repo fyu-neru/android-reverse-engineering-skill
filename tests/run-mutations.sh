@@ -13,6 +13,16 @@ set -uo pipefail
 TESTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
 
+# For is_windows_host(), the same Windows-host predicate (and the same
+# ARE_TESTS_FORCE_NOT_WINDOWS override) the [win]-labeled test blocks in
+# tests/test-decompile.sh and tests/test-tools-psv.sh are gated on. A
+# mutation whose EXPECT: names one of those [win] assertions is
+# structurally unkillable on a non-Windows host — the guard itself
+# SKIP:s there — so REQUIRES:windows (below) opts such mutations out
+# instead of letting them inflate the survivor count with a result the
+# mutation was never able to produce here.
+. "$TESTS_DIR/lib/harness.sh"
+
 # Before mutating anything, confirm the suite is green on its own. If it
 # is already red for an unrelated reason (a flaky test, a missing binary,
 # a broken environment), every mutation below would appear "killed" while
@@ -197,6 +207,12 @@ for m in "$TESTS_DIR"/mutations/*.mutation; do
 
   if [ "$requires" = "bash<4.4" ] && ! bash_version_satisfies_lt_4_4; then
     echo "  skip     - $name: REQUIRES bash<4.4, this shell is $BASH_VERSION"
+    skipped=$((skipped + 1)); skipped_names="$skipped_names $name"
+    continue
+  fi
+
+  if [ "$requires" = "windows" ] && ! is_windows_host; then
+    echo "  skip     - $name: REQUIRES windows, this host is not Windows (uname -s: $(uname -s 2>/dev/null || echo unknown)) — the [win] guard it targets is itself SKIP:'d here, so this mutation cannot be killed or survived meaningfully"
     skipped=$((skipped + 1)); skipped_names="$skipped_names $name"
     continue
   fi
