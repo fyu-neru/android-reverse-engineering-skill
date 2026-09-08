@@ -371,4 +371,4 @@ assert_contains "$warning_line7" "VINEFLOWER_JAR" \
   "[all] install-dep.sh vineflower's profile warning line itself names the new VINEFLOWER_JAR variable to migrate to"
 
 cleanup_tmpdirs
-echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
+print_summary

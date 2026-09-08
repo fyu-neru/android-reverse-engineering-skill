@@ -309,6 +309,13 @@ assert_contains "$jadx_argv_mode_set" "-m fallback" \
 
 out_mode_unset=$(cd "$workmode" && PATH="$binmode:$PATH" "${BASH:-bash}" "$SCRIPT" app.apk 2>&1)
 jadx_argv_mode_unset=$(printf '%s\n' "$out_mode_unset" | grep '^JADX_ARGV:' || true)
+# `|| true` hands back an empty string when the stub never ran, and
+# assert_not_contains passes against empty. That is the exact shape that
+# let the python3 stub check assert nothing on Linux, so the
+# not-contains below is only meaningful once the line is known to exist.
+if [ -n "$jadx_argv_mode_unset" ]; then mode_unset_seen=present; else mode_unset_seen=absent; fi
+assert_equals "$mode_unset_seen" "present" \
+  "[all] Task1 precondition: jadx was actually invoked with --mode omitted (the not-contains below is vacuous against an empty argv line)"
 assert_not_contains "$jadx_argv_mode_unset" "-m " \
   "[all] Task1: --mode omitted does not pass -m to jadx at all (jadx keeps its own default, not a hardcoded one)"
 
@@ -341,9 +348,9 @@ elif command -v powershell >/dev/null 2>&1; then
 fi
 
 if ! is_windows_host; then
-  echo "SKIP: not running on a Windows host; skipping the [win] decompile.ps1 checks (D11, D13, D14, D17, D18, D19-D22, Task1 — 26 assertions require Windows executable-resolution semantics)."
+  skip_group 27 "not running on a Windows host; skipping the [win] decompile.ps1 checks (D11, D13, D14, D17, D18, D19-D22, Task1 — 27 assertions require Windows executable-resolution semantics)."
 elif [ -z "$PWSH_BIN" ]; then
-  echo "SKIP: on a Windows host but neither pwsh nor powershell found on PATH; skipping the [win] decompile.ps1 checks."
+  skip_group 27 "on a Windows host but neither pwsh nor powershell found on PATH; skipping the same 27 [win] decompile.ps1 assertions."
 else
   PS1_SCRIPT="$SCRIPT_DIR/decompile.ps1"
   work11=$(new_tmpdir)
@@ -783,6 +790,12 @@ CMD
   outmodeps_unset=$(cd "$workmodeps" && PATH="$binmodeps:$path_modeps" \
     "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_modeps" app.apk 2>&1)
   jadx_argv_modeps_unset=$(printf '%s\n' "$outmodeps_unset" | grep '^JADX_ARGV:' || true)
+  # Same vacuity guard as the bash-side check above, and doubly worth
+  # having here: this block does not run in CI at all, so an empty argv
+  # line would go unnoticed on both platforms.
+  if [ -n "$jadx_argv_modeps_unset" ]; then modeps_unset_seen=present; else modeps_unset_seen=absent; fi
+  assert_equals "$modeps_unset_seen" "present" \
+    "[win] Task1 precondition: decompile.ps1 actually invoked jadx with -Mode omitted (the not-contains below is vacuous against an empty argv line)"
   assert_not_contains "$jadx_argv_modeps_unset" "-m " \
     "[win] Task1: decompile.ps1 with -Mode omitted does not pass -m to jadx at all (jadx keeps its own default)"
 
@@ -847,4 +860,4 @@ assert_equals "$final_ext_d10" "original-ext" \
   "[all] D10: after that failing call, the next decompile_single call still restores the true original ext_lower rather than the failed call's leaked override"
 
 cleanup_tmpdirs
-echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
+print_summary

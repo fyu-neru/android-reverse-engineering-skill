@@ -155,9 +155,12 @@ scan "no readlink -f in tests/lib (GNU only)" '\breadlink[[:space:]]+-f\b' "$REP
 # guarded and unguarded forms differ only by the presence of `${arr[@]+…}`
 # around an otherwise-identical expansion — a functional test is the only
 # way to catch a reversion. harness.sh's cleanup_tmpdirs() is exercised by
-# every test file, but always with a non-empty TEST_TMPDIRS by the time it
-# runs (every file calls new_tmpdir() at least once first), so the empty
-# case needs its own direct exercise here.
+# every test file — and the array it guards is empty on every one of those
+# runs, not just this one: every call site is `d=$(new_tmpdir)`, so the
+# append lands in a subshell and never reaches the parent's array (see the
+# registry test below). The guarded expansion is the only thing keeping
+# that from erroring under set -u, and this exercises it deliberately
+# rather than by accident.
 sc_emptyarr_out=$(
   set -uo pipefail
   # shellcheck disable=SC1090
@@ -168,5 +171,58 @@ sc_emptyarr_out=$(
 assert_equals "$sc_emptyarr_out" "OK" \
   "harness.sh: cleanup_tmpdirs() does not error on an empty TEST_TMPDIRS array under set -u"
 
+# path_without_command has to keep the OTHER executables in a directory
+# reachable, not merely leave the named one out of the mirror. That is
+# not automatic: on Windows, creating a symlink needs Developer Mode or
+# SeCreateSymbolicLinkPrivilege, so `ln -s` returns EPERM for every
+# entry and an unchecked `ln -s dir/* mirror/` yields a mirror with no
+# executables in it at all. The suite stayed green through that only
+# because the directory holding python3 there happened to contain
+# nothing check-deps.sh needs — the same accident-of-layout reasoning
+# that produced the bug this helper exists to fix.
+#
+# Driven through a fixture directory rather than the real PATH so the
+# assertion means the same thing on both platforms.
+sc_pwc_src=$(new_tmpdir)
+make_stub_bin "$sc_pwc_src" python3 'exit 49'
+make_stub_bin "$sc_pwc_src" aretest_marker 'echo MARKER_RAN'
+sc_pwc_oldpath="$PATH"
+PATH="$sc_pwc_src:$PATH"
+sc_pwc_path=$(path_without_command python3)
+PATH="$sc_pwc_oldpath"
+sc_pwc_marker=$(PATH="$sc_pwc_path" aretest_marker 2>/dev/null || echo MARKER_LOST)
+assert_equals "$sc_pwc_marker" "MARKER_RAN" \
+  "[all] harness.sh: path_without_command keeps the directory's other executables runnable, not just absent from the mirror"
+sc_pwc_py3=$(PATH="$sc_pwc_path" command -v python3 2>/dev/null || echo NONE)
+assert_equals "$sc_pwc_py3" "NONE" \
+  "[all] harness.sh: path_without_command leaves the named command unresolvable anywhere on the returned PATH"
+
+# The overwhelmingly common call shape is `d=$(new_tmpdir)` — a command
+# substitution, so the TEST_TMPDIRS append happens in a subshell and dies
+# with it. Before new_tmpdir also recorded the path in a registry file,
+# cleanup_tmpdirs therefore walked an array that was still empty and
+# removed nothing: 110 call sites across 8 test files, one leaked
+# directory each per run, and run-mutations.sh runs the suite 50-odd
+# times. TMPDIR on the machine where this was noticed held 106,726 stale
+# aretest-* directories.
+#
+# Run in a separate bash process, not a subshell, so it gets its own $$
+# and therefore its own registry file rather than clearing this file's.
+sc_leak_dir=$(bash -c '
+  set -uo pipefail
+  . "$1/tests/lib/harness.sh"
+  d=$(new_tmpdir)
+  cleanup_tmpdirs
+  echo "$d"
+' _ "$REPO_ROOT")
+if [ -d "$sc_leak_dir" ]; then
+  sc_leak_state=leaked
+else
+  sc_leak_state=removed
+fi
+assert_equals "$sc_leak_state" "removed" \
+  "[all] harness.sh: cleanup_tmpdirs() removes a directory registered from inside a command substitution (the shape every call site uses)"
+rm -rf "$sc_leak_dir"
+
 cleanup_tmpdirs
-echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
+print_summary

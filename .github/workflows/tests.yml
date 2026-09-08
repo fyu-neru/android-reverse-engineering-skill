@@ -23,9 +23,18 @@ on:
 # only, not by actually running under 3.2 anywhere in CI. It also means:
 # - The two REQUIRES:bash<4.4 mutations (d3-empty-array-*) are permanently
 #   skipped every run, since ubuntu-latest's bash is 5.x.
-# - tests/test-powershell-syntax.sh always takes its "no pwsh found" skip
-#   path (SUMMARY 0 0); the four PowerShell parse assertions it contains
-#   are not exercised anywhere in this CI.
+# - 54 [win]-labelled assertions never run here, and the 12
+#   REQUIRES:windows mutations guarding them are skipped every run.
+#   Windows executable resolution (PATHEXT finding a .cmd/.bat through
+#   Get-Command -CommandType Application) and USERPROFILE/C:\-rooted
+#   paths cannot hold on Linux, so those assertions are gated on the
+#   host OS rather than left to fail here. The suite prints the count
+#   and the reason: 168 run + 54 skipped is the 222 a Windows host runs.
+# - The PowerShell coverage this CI does have is
+#   tests/test-powershell-syntax.sh. ubuntu-latest ships pwsh, so all
+#   five .ps1 files are genuinely parsed here — but parsing is not
+#   execution. No PowerShell behaviour is exercised in this CI, only
+#   syntax.
 jobs:
   suite:
     name: ${{ matrix.os }}

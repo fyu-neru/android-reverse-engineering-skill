@@ -136,4 +136,4 @@ assert_equals "$leftover_d11" "0" \
   "[all] D11: no orphaned mktemp file (HOSTS_TMP) remains in TMPDIR after that failing run"
 
 cleanup_tmpdirs
-echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
+print_summary

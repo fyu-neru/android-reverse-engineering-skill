@@ -162,4 +162,4 @@ assert_contains "$py3_line_case3" "[OK] python3 3.11.4" \
   "[all] Task2 case 3: a genuinely working python3 interpreter is reported [OK] with its version"
 
 cleanup_tmpdirs
-echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
+print_summary

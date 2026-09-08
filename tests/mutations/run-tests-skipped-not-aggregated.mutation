@@ -1,0 +1,4 @@
+FILE:tests/run-tests.sh
+FIND:  total_skipped=$((total_skipped + skipped))
+REPLACE:  :
+EXPECT:runner reports the skipped total in its summary block

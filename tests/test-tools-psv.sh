@@ -542,9 +542,9 @@ elif command -v powershell >/dev/null 2>&1; then
 fi
 
 if ! is_windows_host; then
-  echo "SKIP: not running on a Windows host; skipping the [win] runtime cross-reader consistency group (Resolve-Tool/Get-ToolArgv/Expand-ToolPlaceholders on Tools.ps1 — 27 assertions require Windows executable-resolution semantics)."
+  skip_group 27 "not running on a Windows host; skipping the [win] runtime cross-reader consistency group (Resolve-Tool/Get-ToolArgv/Expand-ToolPlaceholders on Tools.ps1 — 27 assertions require Windows executable-resolution semantics)."
 elif [ -z "$PWSH_BIN" ]; then
-  echo "SKIP: on a Windows host but neither pwsh nor powershell found on PATH; skipping the [win] runtime cross-reader consistency group."
+  skip_group 27 "on a Windows host but neither pwsh nor powershell found on PATH; skipping the same 27 [win] cross-reader assertions."
 else
   cross_root=$(new_tmpdir)
   cross_lib="$cross_root/skills/android-reverse-engineering/scripts/lib"
@@ -934,4 +934,4 @@ EOF
 fi
 
 cleanup_tmpdirs
-echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
+print_summary

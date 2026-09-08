@@ -37,4 +37,4 @@ assert_contains "$lower_trigger_line" "fernflower" \
   "[all] SKILL.md's sole fernflower occurrence is on the frontmatter trigger: line"
 
 cleanup_tmpdirs
-echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
+print_summary

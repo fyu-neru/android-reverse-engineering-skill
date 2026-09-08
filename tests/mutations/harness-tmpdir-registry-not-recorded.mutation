@@ -1,0 +1,4 @@
+FILE:tests/lib/harness.sh
+FIND:  echo "$d" >> "$TEST_TMPDIR_REGISTRY" 2>/dev/null || true
+REPLACE:  :
+EXPECT:harness.sh: cleanup_tmpdirs() removes a directory registered from inside a command substitution

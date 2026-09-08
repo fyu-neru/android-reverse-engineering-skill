@@ -25,8 +25,8 @@ elif command -v powershell >/dev/null 2>&1; then
 fi
 
 if [ -z "$PWSH_BIN" ]; then
-  echo "SKIP: neither pwsh nor powershell found on PATH; skipping PowerShell syntax checks."
-  echo "SUMMARY 0 0"
+  skip_group 5 "neither pwsh nor powershell found on PATH; skipping the 5 PowerShell syntax checks."
+  print_summary
   exit 0
 fi
 
@@ -60,4 +60,4 @@ for f in "$SCRIPT_DIR"/*.ps1 "$SCRIPT_DIR"/lib/*.ps1; do
 done
 
 cleanup_tmpdirs
-echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
+print_summary
