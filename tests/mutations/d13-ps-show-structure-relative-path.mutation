@@ -2,3 +2,4 @@ FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scri
 FIND:        $srcDirAbs = (Resolve-Path -LiteralPath $SrcDir).Path
 REPLACE:        $srcDirAbs = $SrcDir
 EXPECT:D13: decompile.ps1 print_structure surfaces com\example\network with the default relative output dir
+REQUIRES:windows

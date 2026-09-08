@@ -119,6 +119,9 @@ Options:
 - `--deobf` — Enable deobfuscation (recommended for obfuscated apps)
 - `--no-res` — Skip resources, decompile code only (faster)
 - `--engine ENGINE` — `jadx` (default), `vineflower`, or `both`
+- `--mode MODE` — jadx-only decompilation mode: `auto` (jadx's own default), `restructure`, `simple`, `fallback`. Omit this flag entirely to let jadx pick its own default — it is never hardcoded on jadx's behalf.
+
+**When jadx crashes on a specific class, or decompiles it into obviously broken output, reach for `--mode fallback`.** It bypasses jadx's normal CFG-restructuring decompiler for the problem class(es) in favor of a simpler, crash-resistant translation. It produces less readable code than jadx's default, so only reach for it when the default mode is the thing actually failing — it is the escape hatch for a class jadx cannot otherwise handle, not a general-purpose alternative.
 
 **Engine selection strategy**:
 
@@ -172,6 +175,18 @@ If Phase 0 reported moderate / high obfuscation **and** the app is Kotlin
 script before tracing call flows. R8 obfuscates JVM symbols but cannot
 strip Kotlin metadata strings, so original FQNs leak through
 `@DebugMetadata` and `@Metadata.d2`.
+
+Both `recover-kotlin-names.sh` and `lookup-name.sh` are internally embedded
+Python scripts — **`python3` is required to run them** (declared as an
+optional dependency in `check-deps.sh`/`check-deps.ps1` until 2.2.0 migrates
+these two scripts onto it as required). If `check-deps` reports python3
+`[MISSING]`, install a real Python 3 interpreter before running either
+script. **On Windows, typing `python3` with nothing installed opens the
+Microsoft Store instead of running anything** — that app-execution-alias
+stub resolves on PATH but is not an interpreter; `check-deps.ps1` detects
+this case specifically (it actually runs the resolved `python3`, not just
+checks that the name exists) and reports it as `[MISSING]` rather than
+`[OK]`.
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/skills/android-reverse-engineering/scripts/recover-kotlin-names.sh \

@@ -2,3 +2,4 @@ FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scri
 FIND:            $ffStatus = Invoke-Vineflower -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
 REPLACE:            Invoke-Vineflower -OutDir $OutDir -FileAbs $FileAbs -FileExt $fileExt
 EXPECT:D11: decompile.ps1 -Engine vineflower on a .apk exits non-zero
+REQUIRES:windows

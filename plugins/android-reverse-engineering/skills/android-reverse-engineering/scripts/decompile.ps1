@@ -5,6 +5,7 @@ param(
     [switch]$Deobf,
     [switch]$NoRes,
     [string]$Engine = 'jadx',
+    [string]$Mode = '',
     [Parameter(Position=0)]
     [string]$InputFile,
     [Alias('h')]
@@ -46,6 +47,9 @@ Options:
   -Deobf            Enable deobfuscation of names
   -NoRes            Skip resource decoding (faster, code-only)
   -Engine ENGINE    Decompiler engine: jadx, vineflower, or both (default: jadx)
+  -Mode MODE        jadx decompilation mode: auto, restructure, simple, or
+                     fallback. Passed through to jadx as -m. When omitted,
+                     nothing is passed and jadx uses its own default (auto).
   -Help             Show this help message
 
 Engines:
@@ -59,6 +63,16 @@ Engines:
               jadx output  -> <output>/jadx/
               vineflower   -> <output>/vineflower/
               (requires a .jar, .aar, or .class input, same as -Engine vineflower)
+
+jadx modes (-Mode, jadx engine only):
+  auto         jadx picks the best strategy per method. This is jadx's own
+               default - it is never passed explicitly by this script unless
+               you type -Mode auto yourself.
+  restructure  Force the normal CFG-restructuring decompiler.
+  simple       A simpler, more literal bytecode-to-source translation.
+  fallback     Escape hatch for a class jadx crashes on or decompiles into
+               obviously broken output - bypasses the normal decompiler for
+               it. Produces less readable code; use only when needed.
 
 Environment:
   VINEFLOWER_JAR   Path to vineflower.jar
@@ -110,6 +124,15 @@ if ($Engine -notin @('jadx', 'vineflower', 'both')) {
     exit 1
 }
 
+# An empty $Mode (its default) is deliberately accepted here - it means
+# -Mode was never given. Invoke-Jadx below only appends -m when $Mode is
+# non-empty, so jadx keeps its own default rather than this script
+# hardcoding one on jadx's behalf.
+if ($Mode -and ($Mode -notin @('auto', 'restructure', 'simple', 'fallback'))) {
+    Write-Host "Error: Unknown mode '$Mode'. Use auto, restructure, simple, or fallback." -ForegroundColor Red
+    exit 1
+}
+
 $baseName = [IO.Path]::GetFileNameWithoutExtension($InputFile)
 $inputFileAbs = (Resolve-Path $InputFile).Path
 
@@ -143,6 +166,12 @@ function Invoke-Jadx {
     $jadxArgs = @('-d', $OutDir)
     if ($Deobf) { $jadxArgs += '--deobf' }
     if ($NoRes) { $jadxArgs += '--no-res' }
+    # -m is only appended when -Mode was actually given ($Mode non-empty).
+    # Hardcoding "-m auto" here would silently diverge the moment jadx
+    # changes what its own default means - letting jadx decide is the
+    # whole point. $Mode is read from script scope (set by the -Mode
+    # parameter), the same way $Deobf/$NoRes already are above.
+    if ($Mode) { $jadxArgs += '-m'; $jadxArgs += $Mode }
     $jadxArgs += '--show-bad-code'
     $jadxArgs += $FileAbs
 

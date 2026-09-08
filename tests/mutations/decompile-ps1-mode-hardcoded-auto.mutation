@@ -1,0 +1,5 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.ps1
+FIND:    if ($Mode) { $jadxArgs += '-m'; $jadxArgs += $Mode }
+REPLACE:    $jadxArgs += '-m'; $jadxArgs += (& { if ($Mode) { $Mode } else { 'auto' } })
+EXPECT:decompile.ps1 with -Mode omitted does not pass -m to jadx at all
+REQUIRES:windows

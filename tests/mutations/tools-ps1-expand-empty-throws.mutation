@@ -2,3 +2,4 @@ FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scri
 FIND:    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
 REPLACE:    param([Parameter(Mandatory = $true)][string]$Value)
 EXPECT:Expand-ToolPlaceholders accepts an empty string ([AllowEmptyString()]) instead of rejecting it as a missing Mandatory argument
+REQUIRES:windows

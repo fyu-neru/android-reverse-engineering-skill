@@ -1,0 +1,6 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/decompile.sh
+FIND:  INPUT_FILE_ABS="$saved_input"
+REPLACE:  if [[ $rc -eq 0 ]]; then INPUT_FILE_ABS="$saved_input"; fi
+FIND:  ext_lower="$saved_ext"
+REPLACE:  if [[ $rc -eq 0 ]]; then ext_lower="$saved_ext"; fi
+EXPECT:D10: after that failing call, the next decompile_single call still restores the true original INPUT_FILE_ABS

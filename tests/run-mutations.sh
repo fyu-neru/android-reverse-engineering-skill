@@ -13,6 +13,16 @@ set -uo pipefail
 TESTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
 
+# For is_windows_host(), the same Windows-host predicate (and the same
+# ARE_TESTS_FORCE_NOT_WINDOWS override) the [win]-labeled test blocks in
+# tests/test-decompile.sh and tests/test-tools-psv.sh are gated on. A
+# mutation whose EXPECT: names one of those [win] assertions is
+# structurally unkillable on a non-Windows host — the guard itself
+# SKIP:s there — so REQUIRES:windows (below) opts such mutations out
+# instead of letting them inflate the survivor count with a result the
+# mutation was never able to produce here.
+. "$TESTS_DIR/lib/harness.sh"
+
 # Before mutating anything, confirm the suite is green on its own. If it
 # is already red for an unrelated reason (a flaky test, a missing binary,
 # a broken environment), every mutation below would appear "killed" while
@@ -34,7 +44,16 @@ fi
 # waiting on it) with no result at all. A normal run of run-tests.sh here
 # takes well under two minutes; 300s is comfortably above that while still
 # recovering in a bounded time when something hangs.
-PER_MUTATION_TIMEOUT_SECONDS=90
+#
+# Not lower than that: tools-ps1-argv-jar-bare-java replaces a resolved java
+# path with a bare 'java' literal, so the mutated suite resolves this machine's
+# real JDK and spends its time starting actual JVMs — measured at 82s on its
+# own, and past 90s under the load of a full mutation run. At 90s it reported
+# TIMEOUT and was counted as a survivor, which was a false alarm: re-run by
+# hand, its EXPECT guard does fail exactly as intended. A timeout that fires on
+# a merely slow mutation costs more than it saves, because a false survivor in
+# every report is what teaches people to stop reading the report.
+PER_MUTATION_TIMEOUT_SECONDS=300
 
 total=0
 survived=0
@@ -197,6 +216,18 @@ for m in "$TESTS_DIR"/mutations/*.mutation; do
 
   if [ "$requires" = "bash<4.4" ] && ! bash_version_satisfies_lt_4_4; then
     echo "  skip     - $name: REQUIRES bash<4.4, this shell is $BASH_VERSION"
+    skipped=$((skipped + 1)); skipped_names="$skipped_names $name"
+    continue
+  fi
+
+  if [ "$requires" = "windows" ] && ! is_windows_host; then
+    echo "  skip     - $name: REQUIRES windows, this host is not Windows (uname -s: $(uname -s 2>/dev/null || echo unknown)) — the [win] guard it targets is itself SKIP:'d here, so this mutation cannot be killed or survived meaningfully"
+    skipped=$((skipped + 1)); skipped_names="$skipped_names $name"
+    continue
+  fi
+
+  if [ "$requires" = "not-windows" ] && host_is_really_windows; then
+    echo "  skip     - $name: REQUIRES not-windows, this host IS Windows — the defect it reintroduces is only observable where the target command shares a directory with the core utilities (python3 in /usr/bin next to grep and sed), which is not this host's layout, so it can be neither killed nor meaningfully survived here"
     skipped=$((skipped + 1)); skipped_names="$skipped_names $name"
     continue
   fi

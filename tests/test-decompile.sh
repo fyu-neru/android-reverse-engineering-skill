@@ -282,13 +282,64 @@ assert_equals "$status16" "1" \
 assert_contains "$out16" "FERNFLOWER_JAR_PATH 已於 2.0.0 更名為 VINEFLOWER_JAR" \
   "[all] D16: a set FERNFLOWER_JAR_PATH prints the exact migration hint"
 
+# --- Task 1 (2.1.0): jadx's -m/--decompilation-mode must be reachable via
+# --mode, validated, and passed through as -m <value>. The part most likely
+# to be written wrong is the omitted case: --mode not given must NOT pass
+# -m at all (not even a hardcoded "-m auto") so jadx keeps deciding its own
+# default. --mode fallback is jadx's escape hatch for a class it crashes on
+# or decompiles into broken output — today's users cannot reach it. ---
+workmode=$(new_tmpdir)
+binmode=$(new_tmpdir)
+make_stub_bin "$binmode" jadx 'echo "JADX_ARGV: $*"
+out=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-d" ]; then out="$a"; fi
+  prev="$a"
+done
+mkdir -p "$out/sources"
+exit 0'
+
+touch "$workmode/app.apk"
+
+out_mode_set=$(cd "$workmode" && PATH="$binmode:$PATH" "${BASH:-bash}" "$SCRIPT" --mode fallback app.apk 2>&1)
+jadx_argv_mode_set=$(printf '%s\n' "$out_mode_set" | grep '^JADX_ARGV:' || true)
+assert_contains "$jadx_argv_mode_set" "-m fallback" \
+  "[all] Task1: --mode fallback is passed through to jadx as -m fallback"
+
+out_mode_unset=$(cd "$workmode" && PATH="$binmode:$PATH" "${BASH:-bash}" "$SCRIPT" app.apk 2>&1)
+jadx_argv_mode_unset=$(printf '%s\n' "$out_mode_unset" | grep '^JADX_ARGV:' || true)
+# `|| true` hands back an empty string when the stub never ran, and
+# assert_not_contains passes against empty. That is the exact shape that
+# let the python3 stub check assert nothing on Linux, so the
+# not-contains below is only meaningful once the line is known to exist.
+if [ -n "$jadx_argv_mode_unset" ]; then mode_unset_seen=present; else mode_unset_seen=absent; fi
+assert_equals "$mode_unset_seen" "present" \
+  "[all] Task1 precondition: jadx was actually invoked with --mode omitted (the not-contains below is vacuous against an empty argv line)"
+assert_not_contains "$jadx_argv_mode_unset" "-m " \
+  "[all] Task1: --mode omitted does not pass -m to jadx at all (jadx keeps its own default, not a hardcoded one)"
+
+out_mode_bad=$(cd "$workmode" && PATH="$binmode:$PATH" "${BASH:-bash}" "$SCRIPT" --mode bogus app.apk 2>&1)
+status_mode_bad=$?
+assert_equals "$status_mode_bad" "1" \
+  "[all] Task1: an invalid --mode value exits non-zero"
+assert_contains "$out_mode_bad" "auto, restructure, simple, or fallback" \
+  "[all] Task1: an invalid --mode value's error names the accepted values"
+
 # --- D11 (review round 1, C1): decompile.ps1's -Engine vineflower
 # refusal must exit non-zero, not announce failure and then print a
 # success banner. Found by actually running it: Invoke-DecompileSingle
 # used to discard Invoke-Vineflower's boolean return value as a bare
 # statement, so the refusal's $false never reached the script's exit
 # code and execution fell through to "=== Decompilation complete ===".
-# Only runs where pwsh/powershell exists.
+#
+# This whole block (D11, D13, D14, D17, D18, D19-D22, Task1's PS1
+# counterpart — 26 assertions) only runs on an actual Windows host.
+# Its stubs are .cmd/.bat files that only Windows executable resolution
+# (PATHEXT via `Get-Command -CommandType Application`) can find, and it
+# relies on USERPROFILE/C:\-rooted paths — none of which hold merely
+# because a pwsh interpreter happens to be on PATH (ubuntu-latest ships
+# pwsh, which is exactly what let these run-and-fail on Linux CI).
 PWSH_BIN=""
 if command -v pwsh >/dev/null 2>&1; then
   PWSH_BIN="pwsh"
@@ -296,8 +347,10 @@ elif command -v powershell >/dev/null 2>&1; then
   PWSH_BIN="powershell"
 fi
 
-if [ -z "$PWSH_BIN" ]; then
-  echo "SKIP: neither pwsh nor powershell found on PATH; skipping the [win] decompile.ps1 refusal-exit-code check."
+if ! is_windows_host; then
+  skip_group 27 "not running on a Windows host; skipping the [win] decompile.ps1 checks (D11, D13, D14, D17, D18, D19-D22, Task1 — 27 assertions require Windows executable-resolution semantics)."
+elif [ -z "$PWSH_BIN" ]; then
+  skip_group 27 "on a Windows host but neither pwsh nor powershell found on PATH; skipping the same 27 [win] decompile.ps1 assertions."
 else
   PS1_SCRIPT="$SCRIPT_DIR/decompile.ps1"
   work11=$(new_tmpdir)
@@ -685,7 +738,126 @@ CMD
   fi
   assert_equals "$fast22" "yes" \
     "[win] D22: decompile.ps1 returns in well under the stub's 5s sleep once VINEFLOWER_TIMEOUT_SECONDS(1) elapses"
+
+  # --- Task 1 (2.1.0) PS1 counterpart: decompile.ps1's Invoke-Jadx builds
+  # its own $jadxArgs independently of decompile.sh's args array, so the
+  # same -m behavior (passed only when -Mode is given, never a hardcoded
+  # default) has to be proven here too, not assumed from the bash side.
+  workmodeps=$(new_tmpdir)
+  binmodeps=$(new_tmpdir)
+  cat > "$binmodeps/jadx.cmd" <<'CMD'
+@echo off
+echo JADX_ARGV: %*
+set OUT=
+:loop
+if "%~1"=="" goto done
+if "%PREV%"=="-d" set OUT=%~1
+set PREV=%~1
+shift
+goto loop
+:done
+mkdir "%OUT%\sources" 2>nul
+exit /b 0
+CMD
+
+  touch "$workmodeps/app.apk"
+  native_ps1_modeps="$SCRIPT_DIR/decompile.ps1"
+  if command -v cygpath >/dev/null 2>&1; then
+    native_ps1_modeps=$(cygpath -w "$SCRIPT_DIR/decompile.ps1")
+  fi
+
+  # Filter PATH the same way D10/D13/D14 above do: this machine may have a
+  # real jadx installed, and resolution must be unambiguously forced to the
+  # stub above.
+  path_modeps=""
+  _pmps_oldifs="$IFS"
+  IFS=':'
+  for _pmps_dir in $PATH; do
+    IFS="$_pmps_oldifs"
+    if [ -n "$_pmps_dir" ] && [ ! -f "$_pmps_dir/jadx" ] && [ ! -f "$_pmps_dir/jadx.bat" ] && [ ! -f "$_pmps_dir/jadx.cmd" ]; then
+      path_modeps="${path_modeps:+$path_modeps:}$_pmps_dir"
+    fi
+    IFS=':'
+  done
+  IFS="$_pmps_oldifs"
+
+  outmodeps_set=$(cd "$workmodeps" && PATH="$binmodeps:$path_modeps" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_modeps" -Mode fallback app.apk 2>&1)
+  jadx_argv_modeps_set=$(printf '%s\n' "$outmodeps_set" | grep '^JADX_ARGV:' || true)
+  assert_contains "$jadx_argv_modeps_set" "-m fallback" \
+    "[win] Task1: decompile.ps1 -Mode fallback is passed through to jadx as -m fallback"
+
+  outmodeps_unset=$(cd "$workmodeps" && PATH="$binmodeps:$path_modeps" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_modeps" app.apk 2>&1)
+  jadx_argv_modeps_unset=$(printf '%s\n' "$outmodeps_unset" | grep '^JADX_ARGV:' || true)
+  # Same vacuity guard as the bash-side check above, and doubly worth
+  # having here: this block does not run in CI at all, so an empty argv
+  # line would go unnoticed on both platforms.
+  if [ -n "$jadx_argv_modeps_unset" ]; then modeps_unset_seen=present; else modeps_unset_seen=absent; fi
+  assert_equals "$modeps_unset_seen" "present" \
+    "[win] Task1 precondition: decompile.ps1 actually invoked jadx with -Mode omitted (the not-contains below is vacuous against an empty argv line)"
+  assert_not_contains "$jadx_argv_modeps_unset" "-m " \
+    "[win] Task1: decompile.ps1 with -Mode omitted does not pass -m to jadx at all (jadx keeps its own default)"
+
+  outmodeps_bad=$(cd "$workmodeps" && PATH="$binmodeps:$path_modeps" \
+    "$PWSH_BIN" -NoProfile -NonInteractive -File "$native_ps1_modeps" -Mode bogus app.apk 2>&1)
+  status_modeps_bad=$?
+  assert_equals "$status_modeps_bad" "1" \
+    "[win] Task1: decompile.ps1 with an invalid -Mode value exits non-zero"
+  assert_contains "$outmodeps_bad" "auto, restructure, simple, or fallback" \
+    "[win] Task1: decompile.ps1's invalid -Mode error names the accepted values"
 fi
 
+# --- D10: decompile_single's early `return 1` paths (jadx/vineflower/both
+# engine failures) used to skip restoring INPUT_FILE_ABS/ext_lower — the
+# restore only ran on the fall-through success path at the very end of the
+# function. Extracts the REAL decompile_single() body out of decompile.sh
+# (so this proves what actually ships, not a hand-copied rewrite of it)
+# and sources it standalone with run_jadx/run_vineflower/print_structure
+# stubbed, so a failure can be forced deterministically with no real
+# jadx/APK involved. Calls it twice — first forced to fail, then forced to
+# succeed — and checks the GLOBAL state after the SECOND call: this is the
+# part that would stay wrong on the pre-fix code even though the second
+# call itself "succeeds", because it restores to whatever the first call
+# leaked rather than to the true pre-existing values. Checking only the
+# first call's own exit status (a bare non-zero return) would pass before
+# and after the fix, since `return 1` itself was never in question.
+d10_extract=$(new_tmpdir)
+awk '/^decompile_single\(\) \{/,/^\}$/' "$SCRIPT" > "$d10_extract/decompile_single.sh"
+
+d10_out=$(
+  run_jadx() { return "$D10_STUB_STATUS"; }
+  run_vineflower() { return "$D10_STUB_STATUS"; }
+  print_structure() { :; }
+  # shellcheck disable=SC1090
+  . "$d10_extract/decompile_single.sh"
+
+  ENGINE=jadx
+  INPUT_FILE_ABS="/original/input.apk"
+  ext_lower="original-ext"
+
+  D10_STUB_STATUS=1
+  decompile_single "/tmp/bad-file.xyz" "/tmp/out-bad" "" >/dev/null 2>&1
+  echo "FIRST_CALL_STATUS:$?"
+
+  D10_STUB_STATUS=0
+  decompile_single "/tmp/good-file.abc" "/tmp/out-good" "" >/dev/null 2>&1
+  echo "SECOND_CALL_STATUS:$?"
+
+  echo "FINAL_INPUT_FILE_ABS:$INPUT_FILE_ABS"
+  echo "FINAL_EXT_LOWER:$ext_lower"
+)
+
+first_status_d10=$(printf '%s\n' "$d10_out" | grep '^FIRST_CALL_STATUS:' | cut -d: -f2)
+final_input_d10=$(printf '%s\n' "$d10_out" | grep '^FINAL_INPUT_FILE_ABS:' | cut -d: -f2)
+final_ext_d10=$(printf '%s\n' "$d10_out" | grep '^FINAL_EXT_LOWER:' | cut -d: -f2)
+
+assert_equals "$first_status_d10" "1" \
+  "[all] D10: the first, forced-to-fail decompile_single call itself returns non-zero (precondition for the check below)"
+assert_equals "$final_input_d10" "/original/input.apk" \
+  "[all] D10: after that failing call, the next decompile_single call still restores the true original INPUT_FILE_ABS rather than the failed call's leaked override"
+assert_equals "$final_ext_d10" "original-ext" \
+  "[all] D10: after that failing call, the next decompile_single call still restores the true original ext_lower rather than the failed call's leaked override"
+
 cleanup_tmpdirs
-echo "SUMMARY $TESTS_RUN $TESTS_FAILED"
+print_summary

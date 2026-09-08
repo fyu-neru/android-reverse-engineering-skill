@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/check-deps.sh
+FIND:        if [[ $py3_check_status -eq 0 ]] && [[ "$py3_check_output" == "3" ]]; then
+REPLACE:        if true; then
+EXPECT:must NOT be reported [OK]

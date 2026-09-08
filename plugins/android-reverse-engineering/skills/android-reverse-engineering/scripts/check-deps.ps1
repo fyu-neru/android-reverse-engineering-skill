@@ -143,6 +143,49 @@ foreach ($depId in (Get-ToolList -Want 'optional')) {
                 $missingOptional += "adb"
             }
         }
+        'python3' {
+            # --- Optional: python3 (D7) ---
+            # See the matching comment in check-deps.sh: recover-kotlin-
+            # names.sh and lookup-name.sh are internally embedded Python,
+            # but nothing declared that dependency before this row.
+            # Resolve-Tool finding something named python3 proves nothing
+            # by itself - on Windows, `python3` is commonly the Microsoft
+            # Store's app-execution-alias stub, which resolves via PATH but
+            # exits non-zero with no version output when actually run. This
+            # runs the resolved interpreter rather than trusting its name.
+            $py3Purpose = Get-ToolField -Id 'python3' -Column 'purpose'
+            $py3Resolved = Resolve-Tool -Id 'python3'
+            $py3Ok = $false
+            $py3ExitCode = $null
+            if ($py3Resolved) {
+                try {
+                    $py3CheckOutput = & $py3Resolved.Path -c "import sys; print(sys.version_info[0])" 2>$null
+                    $py3ExitCode = $LASTEXITCODE
+                } catch {
+                    $py3CheckOutput = $null
+                    $py3ExitCode = 1
+                }
+                if ($py3ExitCode -eq 0 -and "$py3CheckOutput".Trim() -eq '3') {
+                    $py3Ok = $true
+                }
+            }
+            if ($py3Ok) {
+                $py3Full = $null
+                try {
+                    $py3Full = & $py3Resolved.Path -c "import platform; print(platform.python_version())" 2>$null
+                } catch {
+                    $py3Full = $null
+                }
+                if (-not "$py3Full".Trim()) { $py3Full = '3' }
+                Write-Host "[OK] python3 $py3Full detected"
+            } elseif ($py3Resolved) {
+                Write-Host "[MISSING] python3 was found at $($py3Resolved.Path) but is not a working interpreter (exit $py3ExitCode) - optional, $py3Purpose. On Windows, a 'python3' that opens the Microsoft Store instead of running is this stub, not a real interpreter."
+                $missingOptional += "python3"
+            } else {
+                Write-Host "[MISSING] python3 not found (optional - $py3Purpose)"
+                $missingOptional += "python3"
+            }
+        }
         default {
             # Generic fallback for a future optional row tools.psv gains
             # before this script grows a dedicated case for it.

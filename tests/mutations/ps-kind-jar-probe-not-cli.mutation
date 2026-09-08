@@ -2,3 +2,4 @@ FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scri
 FIND:                return [pscustomobject]@{ Kind = 'cli'; Path = $cmd.Source }
 REPLACE:                return [pscustomobject]@{ Kind = $kind; Path = $cmd.Source }
 EXPECT:Resolve-Tool reports Kind=cli when a jar-kind tool is actually found via the PATH probe
+REQUIRES:windows

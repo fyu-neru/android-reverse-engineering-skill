@@ -1,0 +1,5 @@
+FILE:tests/lib/harness.sh
+FIND:  ln -s "$1" "$2" 2>/dev/null || ln "$1" "$2" 2>/dev/null || cp -p "$1" "$2" 2>/dev/null
+REPLACE:  ln -s "$1" "$2" 2>/dev/null
+EXPECT:harness.sh: path_without_command keeps the directory's other executables runnable
+REQUIRES:windows

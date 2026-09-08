@@ -1,0 +1,4 @@
+FILE:plugins/android-reverse-engineering/skills/android-reverse-engineering/scripts/find-api-calls.sh
+FIND:  trap 'rm -f "$TMP" "$HOSTS_TMP"' EXIT
+REPLACE:  trap 'rm -f "$TMP"' EXIT
+EXPECT:D11: no orphaned mktemp file (HOSTS_TMP) remains in TMPDIR after that failing run

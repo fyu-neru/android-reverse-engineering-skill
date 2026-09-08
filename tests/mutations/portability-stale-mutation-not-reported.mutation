@@ -1,0 +1,4 @@
+FILE:tests/test-portability.sh
+FIND:        stale="$stale $m_name(pair$m_pair-matches-${m_hits}-lines)"
+REPLACE:        :
+EXPECT:stale_mutations() self-test: a FIND: matching nothing is reported
