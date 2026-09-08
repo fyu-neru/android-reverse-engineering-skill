@@ -44,7 +44,16 @@ fi
 # waiting on it) with no result at all. A normal run of run-tests.sh here
 # takes well under two minutes; 300s is comfortably above that while still
 # recovering in a bounded time when something hangs.
-PER_MUTATION_TIMEOUT_SECONDS=90
+#
+# Not lower than that: tools-ps1-argv-jar-bare-java replaces a resolved java
+# path with a bare 'java' literal, so the mutated suite resolves this machine's
+# real JDK and spends its time starting actual JVMs — measured at 82s on its
+# own, and past 90s under the load of a full mutation run. At 90s it reported
+# TIMEOUT and was counted as a survivor, which was a false alarm: re-run by
+# hand, its EXPECT guard does fail exactly as intended. A timeout that fires on
+# a merely slow mutation costs more than it saves, because a false survivor in
+# every report is what teaches people to stop reading the report.
+PER_MUTATION_TIMEOUT_SECONDS=300
 
 total=0
 survived=0
